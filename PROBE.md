@@ -96,6 +96,27 @@ PLAN.md 以外的新需求（R1 傳送到另一個對話、R2 輔助遠端操作
 
 我傾向 **(b)**：比 (a) 少一個對話框，最後一個選項順便收集「分錯」的回饋（接上 D15 的回饋接口）。RC4 的轉圈要等你在 B 上實際看過可不可以接受。另外，答案字數上限（300 字以上會不會被截）可以再補一個探針。
 
+## 〇之九、R8 探針：session 角色標籤（11/05）
+
+暫時的 `/sn tag`、`/sn r8 on|off|offer|log`（`register.tsx` 標 TEMP 的段落），紀錄在 `$.store` 的 `r8probe:log`，標籤在 `roles:<root>`。Desktop 2.1.317，專案 cc-sticky-notes。四個 session：main `c590ea7c`、從它 fork 出來的 `c53cd129`、統整 `348e22c5`，以及跑探針的這個 session。
+
+| 探針 | 結果 |
+| --- | --- |
+| 2：先標籤再開口（main） | ✅ `/sn tag` 在第一句之前，`prompt.context` 已經算過一次（02:04:34），標完 invalidate 後第一句又算一次（02:05:21）。第一次請求的 `skill_listing` 拿掉 5 個簡報 skill，模型列出的清單裡也沒有它們。transcript 裡的 `skill_listing` 紀錄仍是完整的（型別檔：transcript 留的是引擎的版本） |
+| 2：先標籤再開口（統整） | ✅ 開頭說明送到了：模型答得出自己是統整、屬於哪個 main、三個文件路徑、GAPS.md 規則。清單裡有 5 個簡報 skill |
+| 1：fork 之後的標籤 | ✅ fork 拿到新的 id（`c53cd129`），開始時帶著 4 則訊息；`roles:<root>` 裡沒有它，所以沒被誤認成 main。`session.start` 的輸入沒有任何欄位看得出它是 fork（`isInteractive` 每個 session 都是 false，`surface` 都是 null） |
+| 1：fork 的 skill 清單 | ⚠ fork 的第一句，`skill_listing` hook 又被問了一次（型別檔：resume 時會再問），因為 fork 沒有標籤，回答的是完整清單，和 main 送出去的那份（已拿掉簡報類）不一樣 |
+| 3：改清單不讓快取失效 | ✅ main：第一次請求 cache_create 27,290、cache_read 51,201；第二次 cache_read 78,491 = 51,201 + 27,290，前面整段都讀到了快取。fork：cache_create 26,017、cache_read 55,397，main 的對話那段沒有讀到快取。推論（沒有單獨驗證）：上一列的清單不一致，讓 fork 的前綴從清單那裡開始不同 |
+| 2 的後備做法 | ✅ `/sn r8 offer` 之後，下一句的 context 帶了 4,119 字的簡報 skill 說明（`hook_additional_context`）。清單裡沒有的 skill，手打 `/research-report-writing` 仍然載入成功。⏳ 模型自己叫：補測時（02:17）用一般句子請它寫進度報告，**沒有**叫 Skill tool，直接寫了。但這個 session 02:08 已經手打載入過 research-report-writing，內容還在對話裡，所以這次不算數。新 session 重測（`5a13a3a6`）：`/sn r8 offer` 在第一句之前打，那時這個 session 還沒有清單可以抄，附上的說明是空的（探針的漏洞，已改成拿別的 session 的清單），所以這次測到的是「清單裡沒有、也沒附說明」：模型**沒有**叫 Skill tool，直接寫了兩句。⏳ 「附了說明」的情況還沒測到 |
+| 對話框 | ⚠ 只給一個選項時，Desktop 自己補一個「Yes」。改成每個對話框至少兩個選項（加「取消」） |
+| `/sn tag` 一直顯示處理中 | ⚠ 回傳 `{}`（沒有文字）的指令，transcript 沒有 `local_command` 那一列，Desktop 一直轉圈；有回傳文字的 `/sn r8 offer` 有那一列，也沒有轉圈。改成回傳一行「請在對話框選角色」。⚠ 重測（`90f156d6`）：那一列有了，**還是轉圈**，而且對話框 02:18:03 答完之後還在轉。所以原因不是少了那一列。分開測（11/05）：`/sn r8 ask`（指令先結束、對話框在背景跳）**會轉**；`/sn r8 ask2`（指令等對話框答完才結束）不轉；`/sn r8 inv`（只 invalidate）不轉。✅ 原因是指令結束後才跳出的對話框。`/sn tag` 改成等對話框答完、結果用指令輸出顯示。✅ 重測（`5a13a3a6`）：答完當下就出現「R8：這個 session 標成 main」|
+
+**對 R8 的影響**
+- 決定 3 的代價是真的：main 裡用一般句子請它寫報告，不會自己用 research-report-writing，要手打 `/research-report-writing`。
+- mod 的指令要跳對話框時，一律在指令裡等它答完，不要丟到背景（`$.clock.after`）。
+- 決定 3（沒標籤也拿掉簡報類）有了第二個理由：task-only 是 fork 出來的，fork 時還沒有標籤。如果沒標籤的清單和 main 一樣，fork 的清單就和 main 一致，不會像這次一樣從清單那裡開始重建快取。
+- task-only 不能靠「fork 之後才標」讓清單變對：fork 的第一句之前，清單就已經依「沒有標籤」算好了。
+
 ## 〇之八、Desktop 改版後的 UI 位置（10/15，第一輪）
 
 暫時的 `/sn ui-probe`（commit `d0f286c`）：每個位置標上 10/07 ui-demo 的字母，記下 Desktop 第一次跟 mod 要每個位置的時間，以及 pane 收到的參數。Claude Code 2.1.295（Desktop 內建），Desktop App 有 9/29 起的新版輸入框卡片。

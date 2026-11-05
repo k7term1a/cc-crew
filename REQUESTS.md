@@ -2,7 +2,7 @@
 
 PLAN.md 以外、之後可能做的需求。每項寫需求本身、可行性（型別檔或實測的依據）、還不知道的事、建議的探針。都還沒排進 PLAN.md；要做時再決定。
 
-標記：✅ 實測過；📄 只看過型別檔（`.claude-plugin/types/claude-code/index.d.ts`，2.1.293），還沒實測；✗ 做不到。
+標記：✅ 實測過；📄 只看過型別檔（`.claude-plugin/types/claude-code/index.d.ts`；R1–R6 看的是 2.1.293，R7 起各項標註自己看的版本），還沒實測；✗ 做不到。
 
 ---
 
@@ -261,3 +261,83 @@ Desktop 把 side chat 改成常駐，「旁問不進主線」這件事被內建�
   - `prompt.context` 的區塊是否真的出現在新 session；
   - 壓縮摘要是否照指示寫；
   - Jev 對中文抱怨句的準確度。
+
+---
+
+## R8｜session 角色標籤：main、task-only、統整（11/04 提出，草稿，還沒決定要不要做）
+
+### 背景：工作流
+
+1. 開一個 main session，給它專案簡介，和你一起確定大綱。
+2. 大綱定好後，把它標成 **main**。
+3. 從 main fork 一個 **task-only** session，標好標籤。它從頭負責所有 task 的實作，不是一個 task 開一個。
+4. main 用 SendMessage 和 task-only 對話。task-only 把執行結果和要記錄的東西寫進文件，再回報給 main。主文件只由 main 寫。
+5. 你想統整時，開一個**新的**（不 fork）**統整** session，第一句之前先標好標籤。它只讀文件和證據檔（RECORD.md、progress.jsonl、jsonl 指到的證據檔），不帶 main 的對話。問完、拿到結果就刪掉。中途有討論的話，結果寫進文件，再回報給 main。
+   - 好處一：不會帶著 main 越來越長的對話，每次都從乾淨的上下文開始。
+   - 好處二：順便檢查文件夠不夠。統整 session 答不出來，就代表文件漏記了；它把缺了什麼寫進暫存區，讓 main 補。
+6. 只有統整 session 帶簡報相關的 skill。
+
+開 session 和 fork 都由你在 Desktop 做（11/04 改：只有 task-only 是 fork 出來的）。mod 的 API 沒有建立或 fork session 的方法（📄 `$.session` 有讀取類方法，以及 `compact`、`send`、`append`，沒有建立或 fork session 的方法）。
+
+### 需求
+
+- **A. 標籤指令**：你打 `/sn tag`，mod 用對話框問這個 session 要標哪個角色（main / task-only / 統整 / 清除）。
+  - 標成 main：再問文件路徑（紀錄檔、進度檔、證據資料夾），預設 `RECORD.md`、`progress.jsonl`、`evidence/`，用對話框的「其他」改。路徑存在 main 的標籤裡。
+  - 標成 task-only 或統整：再問它屬於哪一個 main：列出這個專案裡已經標成 main 的 session，請你選。
+- **B. 照角色決定 skill 清單**：
+  - 沒有標籤、main、task-only：清單裡不放簡報類 skill（例如 `research-report-writing`、`anthropic-skills:deckframes`、`anthropic-skills:pptx`、`anthropic-skills:docx`、`anthropic-skills:docs`；名單放在設定卡片上的一欄）。
+  - 統整：加上簡報類 skill。
+- **C. 照角色開關 Jev 分流**：
+  - main：照現在的開關（`/sn on|off`）。
+  - task-only：照現在的開關。mod 本來就只分流你自己打的字（`prompt.submit` 只看 `composer` 和 `bridge` 來源），這裡大多是 main 傳來的訊息。
+  - 統整：不分流，每句都進主線。這裡幾乎每句都是在問專案。
+  - R7 的 `broke_rule` 提醒不受角色影響。
+- **D. 統整 session 的起點**：標成統整後，mod 用 `prompt.context` 給它一段開頭說明：
+  - 它屬於哪一個 main（session id），回報就送到那裡；
+  - 要讀的文件路徑：從所屬 main 的標籤讀出來（紀錄檔、進度檔、證據資料夾）；
+  - 規則：只根據文件回答，每個說法附上出自哪個檔；文件裡沒有就說「文件裡沒有」，不要猜，並把缺的項目寫進暫存區。
+- **E. pane 顯示關係**：以樹狀顯示 main 底下有哪些 task-only 和統整 session，以及每個的角色和最後活動時間。mod 看不到別的 session 是不是正在跑，只能靠每個 session 自己在 `$.store` 更新的時間。
+- **F. 收尾檢查**：你在統整 session 打 `/sn done`（名稱待定）時，mod 檢查兩件事：
+  - 有沒有寫進暫存區或指定的文件：用 `$.fs.exists` / `$.fs.read` 看檔案；
+  - 有沒有回報給 main：用 `$.session.messages()` 找有沒有送給 main 的 SendMessage。
+
+  檢查完告訴你可不可以刪。mod 看不到刪除，所以這一步由你觸發。
+
+### 可行性（2.1.317 types）
+
+- **標籤資料**：用 `$.store` 存，key 例如 `roles:<root>`，內容是 `{ sessionId: { role, parentId, taggedAt, docs? } }`（`docs` 只有 main 有）。R1 的探針確認過 `$.store` 可以當 session 名單 ✅。
+- **對話框**：`$.ui.ask` ✅（Jev 對話框已經在用）。
+- **skill 清單**：📄 `prompt.attachment` 的 `type: "skill_listing"` 可以改寫，`{ text: null }` 可以整段拿掉。
+  - 預設（沒有標籤）就拿掉簡報類，所以 main 和 task-only 不用中途改清單，不會讓快取失效。
+  - 統整 session 是新開的，第一句之前就上標籤，第一次請求的清單就能直接放進簡報類，不用中途改。
+  - 如果是聊到一半才標，**不要回頭改寫前面那份清單**（改前面等於整段重新快取），改成把簡報 skill 的描述附在下一句的 context（`prompt.submit` 的 `context`）。不能用 `prompt.context`：它的區塊放在第一則 user 訊息前面，中途改也是改到前面。
+- **Jev 開關**：`prompt.submit` 已經能讀 session id，多查一次角色就好。
+
+### 決定（11/04）
+
+1. 指令名稱先用 `/sn tag`、`/sn done`，之後可以改。
+2. 簡報類名單預設：`research-report-writing`、`anthropic-skills:deckframes`、`anthropic-skills:pptx`、`anthropic-skills:docx`、`anthropic-skills:docs`。做成設定卡片上的一欄。不放進名單、所有 session 都看得到的：`pdf`、`xlsx`、`dataviz`、`ai-paper-annotator`（分析和讀論文時也會用到）。清單裡 plugin skill 實際的寫法，等探針 2 的 log 確認。
+3. 沒有標籤的 session 也拿掉簡報類 skill，要用就打 `/名字`。
+4. 統整 session 完全不分流，每句都進主線：問完就刪，不用替它省上下文；知識問題的答案常常要寫進簡報。
+5. 文件路徑在標 main 時指定（見 A），統整 session 從 main 的標籤讀。
+
+### 探針（要先做，再決定做法）
+
+11/05 跑了 1、2、3 和 2 的後備做法，結果在 PROBE.md「〇之九」。還沒跑的：4、5。
+
+後備做法（中途才標成統整，把簡報 skill 的說明附在下一句）不再測（11/05 決定）：統整 session 一律新開、第一句之前就標。中途才想統整，就開一個新的統整 session。
+
+1. **fork 後的標籤**（只跟 task-only 有關）：在 Desktop 從標好 main 的 session fork 一個出來，看新 session 的 `$.session.id()` 是不是新的，以及 `roles:<root>` 有沒有被誤認成 main。
+2. **先標籤再開口**：新開一個 session，第一句之前先打 `/sn tag` 標成統整，檢查兩件事，都由 mod 在 hook 裡記 log：
+   - 第一次請求的 skill 清單（`prompt.attachment` 的 `skill_listing`）裡有沒有簡報類；
+   - D 的開頭說明（`prompt.context`）有沒有出現。如果 `prompt.context` 在 `/sn tag` 之前就算過了，標籤後要 `$.ui.invalidate("prompt.context")`，這時還沒有任何請求送出，所以不影響快取。
+
+   如果清單在 `/sn tag` 之前就已經送出去了，改測後備做法：清單裡拿掉某個 skill，只把它的描述附在下一句的 context，看 Skill tool 叫不叫得動，以及模型會不會主動用。
+3. **改清單不讓快取失效**：比較拿掉簡報類前後，第二句之後的 `cache_read_input_tokens` 有沒有正常累積。這個數字看 transcript jsonl 每則回覆的 `usage`；`$.session.usage()` 只有上下文佔用和花費，沒有快取的數字。
+4. **分流照角色切換**：在 main 和統整各打幾句旁問與專案問題，確認 main 的判斷沒有變差，統整確實全進主線。
+5. **只讀文件夠不夠**：拿一個已經有 RECORD.md 和 progress.jsonl 的專案，開統整 session 問幾題進度和結果，看答案是否都附了出處、文件裡沒有的有沒有說「沒有」而不是猜。
+
+### 還不知道
+
+- Desktop 的 fork（現在只有 task-only 用到）在 mod 看來是新的 session，還是同一個 session 的延續（`session.start` 的輸入裡沒有來源欄位；settings hook 的 SessionStart 有 `source: 'fork'`，mod 這邊沒有）。
+- 統整 session 刪掉後，`roles:<root>` 裡的那一筆要怎麼清。mod 看不到刪除，比對 `$.store` 的名單也看不出來（被刪的那一筆只是不再更新）。可能的做法：最後活動時間超過幾天沒更新，pane 就標成「可能已刪除」，讓你按一下清掉。
