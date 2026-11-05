@@ -2,6 +2,51 @@
 
 Oct 6, 2026 · @楷奇
 
+## 11/05 改版：session 角色（優先於以下各節）
+
+11/05 你決定把 mod 的核心從「每句分流到便利貼」改成「幫一個專案的幾個 session 分工」。以下各節和這節衝突的地方，以這節為準；被拿掉的功能，原本的段落留著當紀錄。來源：REQUESTS.md R8（需求與探針）、PROBE.md「〇之九」（實測）。
+
+### 工作流
+
+1. 你在專案底下開新 session，第一句貼上準備好的專案啟動上下文。mod 問你要不要讓 mod 共同管理；要的話，這個 session 標成 **main**。
+2. 和 main 對齊上下文後，你在 Desktop 從 main fork 一個 session，mod 自動把它標成 **sub**。sub 負責所有實作。
+3. 你只在 main 討論。要實作時，main 用 SendMessage 交給 sub；sub 做完回報，main 把結果整理進專案文件。主文件只由 main 寫。
+4. 想統整時，你自己開新 session（不 fork）。mod 從第一句判斷是統整，你確認後標成 **統整**。它只讀專案文件，有討論結果就寫回同一個路徑。深入研究這類外部資料也放在那裡。
+
+### mod 做的事
+
+| 項目 | 做法 | 依據 |
+| --- | --- | --- |
+| 判斷新 session 的第一句 | 新 session 的第一句（這個 session 還沒有任何回答）送 Jev 一次，問它是「專案啟動」「統整」還是「都不是」。前兩種跳對話框確認，「都不是」不問。之後的句子都不送 Jev。沒有 Jev key 就不判斷，用 `/sn tag` 手動標 | 第一句在送出前就經過 `prompt.submit` ✅；標完再算清單和開頭說明，趕得上第一次請求 📄（探針 2 是在第一句之前標的，第一句當下才標還沒測） |
+| 標成 main | 對話框問兩件事：名稱（預設 Desktop 標題，讀不到就用第一句的前 20 字）、文件路徑（預設 `RECORD.md`、`progress.jsonl`、`evidence/`）。記下第一句的指紋，給 fork 比對 | R8 決定 5 |
+| fork 自動標成 sub | fork 一開始（`session.start`）就帶著 main 的訊息。第一句的文字和某個 main 記下的指紋相同、id 又不同，就標成那個 main 的 sub，不問 | fork 會原封不動複製 parent 的紀錄 ✅（這個 session 的兩個 fork 各有 781 筆和 parent 相同）；fork 拿到新的 id、開始時帶著訊息 ✅（探針 1） |
+| 標成統整 | 對話框選屬於哪個 main，顯示 main 的名稱和標記時間，不顯示 id | 11/05 |
+| 開頭說明 | 第一次請求時帶上（`prompt.context`）。main：角色、文件路徑、實作交給 sub、結果整理進文件。統整：所屬 main、文件路徑、只根據文件回答並附出處、沒有就說沒有 | 統整的版本 ✅（探針 2） |
+| skill 清單 | 沒標籤、main、sub 拿掉簡報類（`research-report-writing`、`deckframes`、`pptx`、`docx`、`docs`）；統整保留 | ✅ 探針 2、3 |
+| 狀態列 | 顯示這個 session 是 main、sub、統整，或沒有標籤 | mod 本來就有狀態列 |
+| `/sn tag` | 保留，當手動入口：改標、清除，或沒有 Jev key 時用 | 從指令跳對話框要等答完，不然 Desktop 一直轉圈 ✅（PROBE「〇之九」） |
+
+### 拿掉的功能
+
+- 每句送 Jev 分流：便利貼對話框、`routing` 開關（`/sn on|off`）、`routeThreshold`、`followupThreshold`、路由回饋（`/sn feedback`、`/sn calibrate`）。本文件「Jev 分類設計」一節整節停用。
+- R7 的規則提醒（每句送 Jev 聽「你沒照規則做」）、規則卡片、壓縮時保留規則、新 session 開頭帶規則。
+- R4 的背景統整：每幾回合一次的主線摘要與專案脈絡（`digestEvery`、`/sn every`、`/sn ctx`、pane 的「專案脈絡」卡片）。
+
+### 留著的
+
+便利貼本身：`/sn new`、pane 的樹與追問框、大綱、Notion 同步、統整層產生標題與摘要。
+
+### ⚠ 偏離計畫
+
+- 「多 session 工作流」一節原本寫「mod 不介入：不猜哪句話是在規劃、不幫忙 fork」。11/05 起 mod 會判斷第一句、替 session 標角色。
+- mod 還是不能自己開 session：API 沒有建立或 fork 的方法（📄 2.1.317），這個 session 能用的 Desktop 工具也沒有。fork 由你在 Desktop 按，mod 只負責認出它、標成 sub。
+
+### 還不知道
+
+1. 第一句當下才標，清單和開頭說明趕不趕得上第一次請求。
+2. sub 要怎麼拿到它的工作規則：它的句子大多是 main 用 SendMessage 送來的，不是你打的；fork 的第一次請求會不會再算一次 `prompt.context`，也還沒看過。
+3. main 用 SendMessage 找 sub：這個 session 看過 Desktop 自動把 fork 連到 parent、提示可以用 SendMessage 找它 ✅；sub 回報後，main 能不能自己繼續把結果寫進文件，還沒在真的專案跑過。
+
 ## 背景與目標
 
 做一個 Claude Code mod「cc-sticky-notes」（GitHub repo 與 plugin name 都是 `cc-sticky-notes`，slash command 是 `/sticky-note`），讓我在專案 session 裡隨時問「為什麼 / 這是什麼原理」而不污染主線上下文，問過的東西自動存成樹、畫在側邊 pane；同時用 OpenAI 免費額度在背景做上下文統整（主線進度摘要、旁支摘要、索引、digest）。
@@ -239,6 +284,8 @@ interface Outline {
 
 ## Jev 分類設計
 
+> 11/05 起停用：Jev 只判斷新 session 的第一句，見「11/05 改版」。
+
 一次呼叫 `POST https://api.typesafe.ai/v1/systemone`（確切路徑與欄位名以 console.typesafe.ai 的文件和 Playground 為準），平行問四題。選項名稱與描述用英文，state 保持原文。
 
 **state**（送給 Jev 的內容）
@@ -451,6 +498,8 @@ cc-sticky-notes/
 **開發時載入**：`claude --plugin-dir ./cc-sticky`-notes，存檔自動 reload。載入後 Claude Code 會寫出 `.claude-plugin/types/claude-code/index.d.ts`，這份是該版本的權威型別，PROBE 階段先讀它。
 
 ## 多 session 工作流
+
+> 11/05 起改由 mod 替 session 標角色，見「11/05 改版」。
 
 我的習慣是一個專案一個 session 起頭，脈絡成形後用 Desktop 的 fork（等同 `/branch`）分出第二、第三個 session——一個做事、一個規劃——context 太長時還會直接再開一個新的。所以同一專案同時有三四個 live session 是常態。這件事 mod 不介入：不猜哪句話是在規劃、不幫忙 fork、不幫新 session 命名。它只保證不管開幾個 session，看到的都是同一棵樹，而且新 session 一開就知道之前問過什麼。
 
