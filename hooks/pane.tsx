@@ -33,6 +33,8 @@ export type Settings = {
   /** A Notion data source is set (the sync switch means nothing without one). */
   notionSet: boolean
   provider: 'claude' | 'openai'
+  /** The skills only a 統整 session's listing keeps (the plugin option deckSkills); shown, not edited here. */
+  deckSkills: readonly string[]
 }
 export type SettingField = 'autoOpenPane' | 'notionSync' | 'summaryProvider'
 
@@ -158,6 +160,11 @@ function settingsCard(els: ElementTable, d: PaneData, act: PaneActions): RenderE
       {s.notionSet
         ? row('notion', 'Notion 同步', onOff(s.notionSync), () => act.setSetting('notionSync', !s.notionSync))
         : row('notion', 'Notion 同步', '未設定', () => {}, '用 /sn notion <collection://…> 設定資料庫')}
+      <Box key="set:deck" flexDirection="column">
+        <Text>只有統整 session 看得到的 skill</Text>
+        <Text dimColor>{s.deckSkills.join('、')}</Text>
+        <Text dimColor>在 plugin 的選項 deckSkills 改（逗號分開）。</Text>
+      </Box>
       <Text dimColor>只影響這台電腦；按鈕按一下就換到下一個值。</Text>
     </Box>
   )

@@ -26,6 +26,11 @@ export type Ports = {
   later(fn: () => void): void
   /** Resolves after ms ($.clock.sleep). */
   sleep(ms: number): Promise<void>
+  /**
+   * Resolves after ms ($.clock.after): unlike sleep, a timer the hook does not wait on
+   * with its own budget (HookBudget), so a dialog can be raced against it; cancel ends it.
+   */
+  timer(ms: number): { done: Promise<void>; cancel(): void }
   store: KV
   fetch(url: string, init?: HttpInit): Promise<HttpResponse>
   fork(prompt: string): Promise<ModelForkResult>
@@ -47,6 +52,8 @@ export type Ports = {
     isPaneOpen(): Promise<boolean>
     /** The plugin's one status line under the prompt; undefined clears it. */
     status(text: string | undefined): void
+    /** Asks the skill listing again ($.ui.invalidate('prompt.attachment')); only before anything was sent. */
+    invalidateSkillListing(): void
   }
   state: {
     publishTree(tree: Tree): Promise<void>
@@ -57,6 +64,8 @@ export type Ports = {
     /** The node the pane shows. */
     setSelected(id: string | null): Promise<void>
     selected(): Promise<string | null>
+    /** Draws the status line again (the session's role, today's usage). */
+    refreshStatus(): Promise<void>
   }
   /**
    * This plugin's own userConfig field, as the plugin settings show it: written to

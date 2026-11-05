@@ -4,7 +4,7 @@
   "author": {
     "name": "Kai Chi"
   },
-  "description": "cc-sticky-notes: route curiosity questions to a side pane instead of the main conversation",
+  "description": "cc-sticky-notes: session roles for a project (main, the sub sessions forked from it, 統整 sessions that read only the project documents), plus sticky notes for side questions in a side pane",
   "types": "./types/index.d.ts",
   "userConfig": {
     "summaryProvider": {
@@ -77,6 +77,12 @@
       "title": "Notion data source",
       "default": "",
       "description": "collection://… of the Notion database the notes sync to through the claude.ai Notion connector; empty turns the sync off. Also /sn notion <collection://…>."
+    },
+    "deckSkills": {
+      "type": "string",
+      "title": "Deck skills",
+      "default": "research-report-writing, anthropic-skills:deckframes, anthropic-skills:pptx, anthropic-skills:docx, anthropic-skills:docs",
+      "description": "Comma-separated skill names kept in the skill listing of 統整 sessions only; every other session (main, sub, untagged) goes without them and can still type /<name>"
     },
     "autoOpenPane": {
       "type": "boolean",

@@ -6,14 +6,15 @@ import type { CommandRunResult } from 'claude-code'
 import { notionProbe } from './notion'
 import { change, confirmDelete, dropReason, syncPull, syncPushAll, syncStatus, startNote, type Options } from './notes'
 import type { Ports } from './ports'
+import { tagCommand } from './roles'
 import { setActive } from './tree'
 
 export const COMMAND = 'sticky-note'
 
 export const COMMAND_SPEC = {
   name: COMMAND,
-  description: 'Sticky Notes: open/close the pane, or new | back | rm | provider | notion | doctor',
-  argumentHint: '[new <問題> | back | rm | provider claude|openai | notion … | doctor]',
+  description: 'Sticky Notes: session roles (tag main / sub / 統整) and sticky notes: open/close the pane, or tag | new | back | rm | provider | notion | doctor',
+  argumentHint: '[tag | new <問題> | back | rm | provider claude|openai | notion … | doctor]',
 }
 
 /**
@@ -26,8 +27,8 @@ export const SHORT_COMMAND = 'sn'
 
 export const SHORT_COMMAND_SPEC = {
   name: SHORT_COMMAND,
-  description: 'Sticky Notes: open/close the pane (short for /sticky-note)',
-  argumentHint: '[new <問題> | back | rm | provider claude|openai | notion …]',
+  description: 'Sticky Notes: open/close the pane, tag this session main / sub / 統整 (short for /sticky-note)',
+  argumentHint: '[tag | new <問題> | back | rm | provider claude|openai | notion …]',
 }
 
 const LATER: Record<string, string> = {
@@ -66,6 +67,9 @@ export async function runCommand(p: Ports, opts: Options, args: string): Promise
       else await p.ui.openPane()
       return {}
     }
+    case 'tag':
+      // this session's role: every dialog awaited, the outcome as the command's own row
+      return { text: await tagCommand(p) }
     case 'new': {
       if (rest === '') return { text: '用法：/sticky-note new <問題>' }
       await startNote(p, opts, {

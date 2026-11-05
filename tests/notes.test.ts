@@ -87,6 +87,7 @@ function fake(opts: { typesafeKey?: string; openaiKey?: string; askAnswer?: stri
     now: async () => ++now,
     later: fn => void queue.push(fn),
     sleep: () => new Promise<void>(() => {}),
+    timer: () => ({ done: new Promise<void>(() => {}), cancel: () => {} }),
     store: kv,
     fetch,
     fork: async prompt => {
@@ -140,6 +141,7 @@ function fake(opts: { typesafeKey?: string; openaiKey?: string; askAnswer?: stri
       closePane: async () => {},
       isPaneOpen: async () => false,
       status: () => {},
+      invalidateSkillListing: () => {},
     },
     state: {
       publishTree: async () => {},
@@ -149,6 +151,7 @@ function fake(opts: { typesafeKey?: string; openaiKey?: string; askAnswer?: stri
       lastPromptUuid: async () => 'msg-uuid-1',
       setSelected: async id => void (selected = id),
       selected: async () => selected,
+      refreshStatus: async () => {},
     },
   }
   return {

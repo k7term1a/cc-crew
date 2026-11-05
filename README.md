@@ -1,10 +1,13 @@
 # cc-sticky-notes
 
-一個 Claude Code mod：在專案 session 裡想問的「為什麼 / 這是什麼」，用 `/sn new` 開成「便利貼」，不進主線對話，在背景回答、顯示在右側 pane，並存成一棵同專案所有 session 共用的樹。主線的 context 保持乾淨，追問也能一路掛在同一條旁支下。
+一個 Claude Code mod，做兩件事：
+
+- **session 角色**：幫一個專案的幾個 session 分工。一個 main 和你討論，從它 fork 出來的 sub 負責實作，另開的統整 session 只讀專案文件來回答。見下方「session 角色」。
+- **便利貼**：在專案 session 裡想問的「為什麼 / 這是什麼」，用 `/sn new` 開成「便利貼」，不進主線對話，在背景回答、顯示在右側 pane，並存成一棵同專案所有 session 共用的樹。主線的 context 保持乾淨，追問也能一路掛在同一條旁支下。
 
 版本 0.0.4，給朋友試用中。設計與決策：[PLAN.md](PLAN.md)；Mods API 實測紀錄：[PROBE.md](PROBE.md)；之後可能做的需求：[REQUESTS.md](REQUESTS.md)。
 
-**11/05 改版**：每句送 Jev 分流（便利貼對話框）、規範提醒、背景統整（主線摘要、專案脈絡）都拿掉了，原因見 [PLAN.md](PLAN.md)「11/05 改版」。下面各版的紀錄裡提到的這些功能和指令已經沒有了。
+**11/05 改版**：每句送 Jev 分流（便利貼對話框）、規範提醒、背景統整（主線摘要、專案脈絡）都拿掉了，原因見 [PLAN.md](PLAN.md)「11/05 改版」。下面各版的紀錄裡提到的這些功能和指令已經沒有了。改成 session 角色：新 session 的第一句送 Jev 判斷一次，fork 自動標成 sub，`/sn tag` 手動標。
 
 **0.0.4 新的地方**
 
@@ -33,7 +36,7 @@
 ## 需求
 
 - Claude Code **2.1.288 以上**（Mods 是 early access，在 2.1.288 / 2.1.289、Windows 的 Claude Desktop Code 分頁與終端機測過）。
-- 選用：OpenAI API key（統整層可改用 OpenAI）；TypeSafe 的 Jev API key 目前沒有功能用到。沒有也能用，見下方「金鑰」。
+- 選用：TypeSafe 的 Jev API key（判斷新 session 的第一句）、OpenAI API key（統整層可改用 OpenAI）。沒有也能用，見下方「金鑰」。
 
 ## 安裝
 
@@ -73,10 +76,27 @@ OPENAI_API_KEY=sk-...
 
 - 依序找：環境變數 → `~/.claude/sticky-notes/.env` → mod 資料夾裡的 `.env`。**不會讀你專案自己的 `.env`**（那裡常有那個專案自己的 OpenAI key）。
 - 金鑰值不會被印出、記錄或存進 store；`/sn doctor` 只告訴你找到沒有、從哪裡找到。
-- **沒有 Jev key**：完全不影響，目前沒有功能用到它。
+- **沒有 Jev key**：新 session 的第一句不會被判斷，也不會跳角色的對話框；要標角色就打 `/sn tag`。
 - **沒有 OpenAI key**：完全不影響，預設本來就用 Claude（你登入的訂閱）寫標題和摘要。
 
 ## 怎麼用
+
+### session 角色
+
+一個專案分三種 session：
+
+| 角色 | 做什麼 | 怎麼標 |
+| --- | --- | --- |
+| **main** | 和你討論；要實作時用 SendMessage 交給 sub；把 sub 回報的結果整理進紀錄檔（只有 main 寫紀錄檔） | 新 session 的第一句貼上專案啟動的上下文（目標、背景、計畫、限制），mod 問你要不要讓它共同管理，選「要，標成 main」，再選名稱和文件路徑 |
+| **sub** | 做 main 交代的實作，結果寫進進度檔（一行一個 JSON）和證據資料夾，做完回報 main；不改紀錄檔 | 在 Desktop 從 main fork 一個 session，mod 在它開始時自動標成 sub，不問 |
+| **統整** | 只讀紀錄檔、進度檔、證據資料夾來回答，每個說法附上出處；文件沒寫的回答「文件裡沒有」，並把缺的寫進專案根目錄的 `GAPS.md` | 開一個新的 session（不 fork），第一句請它統整或報告進度，mod 問你要不要標成統整、屬於哪一個 main |
+
+- 判斷第一句要 Jev key，每個新 session 只送一次；之後的句子都不送。判成其他、Jev 沒回應、沒有 key，都不跳對話框，那句照常送出。
+- 對話框 60 秒沒回答、或被關掉，就當作「不用」，那句照常送出。對話框會留在畫面上，關掉就好。
+- 文件路徑預設 `RECORD.md`、`progress.jsonl`、`evidence/`，或 `docs/` 底下的同名檔；在「其他」依序打三個路徑、用逗號分開可以自訂。路徑都相對於專案根目錄。
+- 標好角色後，那個 session 的下一句會帶上這個角色的工作規則（只帶一次，你看不到，Claude 讀得到）。sub 的下一句通常是 main 用 SendMessage 送來的那句。
+- `/sn tag`：手動標、改標或清除（main / sub / 統整 / 清除），沒有 Jev key 時用這個。標 sub 或統整要先有 main。
+- 簡報類 skill（`research-report-writing`、`deckframes`、`pptx`、`docx`、`docs`）只放在統整 session 的 skill 清單裡；其他 session（包括沒標角色的）要用就手打 `/名字`。名單是 plugin 的選項 `deckSkills`。一個 session 送出過請求後才改角色，清單不會回頭改（改了會讓快取失效）。
 
 ### 開一張便利貼
 
@@ -90,7 +110,7 @@ OPENAI_API_KEY=sk-...
 
 ### 狀態列
 
-輸入框下方右側的狀態列顯示這個 mod 今天用掉的額度，例如 `cc-sticky-notes  今日 Jev 0 次 · Claude 35k`（用過 OpenAI 才會出現 OpenAI；Claude 的數字不含讀 cache 的部分；所有專案、所有 session 合計，每天歸零），還有幾則正在回答。
+輸入框下方右側的狀態列先顯示這個 session 的角色（`main「名稱」`、`sub ← main 的名稱`、`統整 ← main 的名稱`，沒標就不顯示），再顯示這個 mod 今天用掉的額度，例如 `cc-sticky-notes  今日 Jev 0 次 · Claude 35k`（用過 OpenAI 才會出現 OpenAI；Claude 的數字不含讀 cache 的部分；所有專案、所有 session 合計，每天歸零），還有幾則正在回答。
 
 ### 右側 pane
 
@@ -101,7 +121,7 @@ OPENAI_API_KEY=sk-...
 - **刪除**：滑鼠移到問題那一列，左邊的 `✕` 會先問一次，再刪掉那則和它底下的追問。只刪這台電腦的；有同步到 Notion 的會在 Notion 勾上「不同步」，其他電腦之後就不會再下載它（已經下載過的不會被刪）。也可以先點開那則，再打 `/sn rm`。
 - **改寫問題**：滑鼠移到問題那一列，左邊會出現 `✎`；改完按 `↵` 會在同一層多一個追問（改的是第一個問題就開一張新卡片），舊的留著，可以用上面的 `●` / `○` 切換。
 - **回覆框**：卡片最下面，接在目前讀到的最後一則下面。Desktop 的輸入框寬度固定，mod 改不了。
-- **設定卡片**：pane 最下面的「設定」，點開可以切換答案回來時打開 pane、統整層（Claude / OpenAI）、Notion 同步。只影響這台電腦，按一下換到下一個值。
+- **設定卡片**：pane 最下面的「設定」，點開可以切換答案回來時打開 pane、統整層（Claude / OpenAI）、Notion 同步。只影響這台電腦，按一下換到下一個值。下面列出只有統整 session 看得到的 skill（在 plugin 的選項 `deckSkills` 改）。
 - **類別**：時間前面有底色的小標籤，是 Jev 對這個主題第一句的判斷（知識旁問、專案疑問、主線任務）。只有 11/05 以前經過 Jev 分流的便利貼有；用 `/sn new` 或回覆框建的沒有類別。
 - **綠色邊框**：這個 session 正在追問的那張；其他卡片都是灰框。只是點開來看不會變成追問中。想結束追問打 `/sn back`。
 
@@ -128,6 +148,7 @@ OPENAI_API_KEY=sk-...
 | 指令 | 作用 |
 | --- | --- |
 | `/sn` | 開 / 關右側 pane |
+| `/sn tag` | 標這個 session 的角色：main、sub、統整，或清除 |
 | `/sn new <問題>` | 開一張便利貼 |
 | `/sn back` | 結束追問，回到主線 |
 | `/sn rm` | 刪除 pane 裡點開的那則便利貼和它底下的追問（會先問） |
@@ -145,6 +166,7 @@ OPENAI_API_KEY=sk-...
 | `summaryProvider` | `claude` | 標題、摘要用誰寫：`claude` 或 `openai`（也可以用 `/sn provider`） |
 | `claudeModel` / `claudeEffort` | `haiku` / `low` | 寫標題摘要的 Claude 模型與 effort（旁答本身一律用主線的模型） |
 | `openaiModel` / `openaiReasoningEffort` | `gpt-5-mini` / `minimal` | `summaryProvider = openai` 時用 |
+| `deckSkills` | `research-report-writing, anthropic-skills:deckframes, anthropic-skills:pptx, anthropic-skills:docx, anthropic-skills:docs` | 只有統整 session 的 skill 清單保留的 skill，逗號分開 |
 
 ## 已知限制
 
@@ -172,6 +194,7 @@ npx -p typescript@5.6 tsc -p .
 - `hooks/register.tsx`：所有 hook，以及 `portsOf($)`。只有這個檔碰 `$`（PROBE.md P1）。
 - `hooks/tree.ts`、`jev.ts`（只剩呼叫 Jev 的通道）、`redact.ts`、`digest.ts`、`answer.ts`：邏輯模組，純函式或吃 `Ports`。
 - `hooks/notes.ts`：流程（便利貼 → 背景回答 → Notion 同步）。
+- `hooks/roles.ts`：session 角色（第一句的判斷與對話框、fork 標成 sub、工作規則、skill 清單、`/sn tag`）。每個 session 一個 key：`role:<專案>:<session id>`。
 - `hooks/secrets.ts`：金鑰從哪裡來。
 - `hooks/pane.tsx`：右側 pane 與輸入框下方的狀態列。
 - `probes/m0/`：M0 探針 mod（`cc-sticky-probe`），獨立的 plugin。

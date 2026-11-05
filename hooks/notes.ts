@@ -11,6 +11,7 @@ import { answerSide } from './answer'
 import { titleAndSummary } from './digest'
 import { markUnsynced, pullNotes, pushNote, type SyncPorts } from './notion'
 import type { Ports } from './ports'
+import { parseDeckSkills } from './roles'
 import { asEffort, claudeProvider } from './providers/claude'
 import { asContextMode, asReasoningEffort, openaiProvider, type OpenAIReasoningEffort } from './providers/openai'
 import { withFallback, type SummaryProvider } from './providers/types'
@@ -28,6 +29,8 @@ export type Options = {
   notionSync: boolean
   /** The Notion data source the notes sync to (collection://…); '' turns the sync off. */
   notionDataSource: string
+  /** The skills only a 統整 session's listing keeps (roles.ts); the plugin option `deckSkills`, comma-separated. */
+  deckSkills: string[]
 }
 
 export function readOptions(o: PluginOptions): Options {
@@ -42,6 +45,7 @@ export function readOptions(o: PluginOptions): Options {
     autoOpenPane: o.autoOpenPane !== false, // default on (the developer's pick, 10/07)
     notionSync: true,
     notionDataSource: typeof o.notionDataSource === 'string' ? o.notionDataSource.trim() : '',
+    deckSkills: parseDeckSkills(o.deckSkills),
   }
 }
 

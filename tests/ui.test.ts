@@ -183,6 +183,9 @@ test('the settings card flips the switches that are left (11/05: no routing, tim
   expect(await pane.find({ key: 'set-btn:autoOpen' } as never)).toMatchObject({ props: { label: '○ 關' } })
   expect(await pane.find({ key: 'set-btn:provider' } as never)).toMatchObject({ props: { label: 'OpenAI' } })
   expect(await pane.find({ key: 'set-btn:notion' } as never)).toMatchObject({ props: { label: '未設定' } })
+  // the deck skills only 統整 sessions list: shown, changed in the plugin's options
+  expect(await pane.find({ type: 'Text', text: /^research-report-writing、anthropic-skills:deckframes、/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /deckSkills/ })).toBeDefined()
   // no project-context card, no rule cards
   expect(await pane.find({ key: 'open:context' } as never)).toBeUndefined()
   expect(await pane.find({ type: 'Text', text: /^專案規範$/ })).toBeUndefined()
