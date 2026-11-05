@@ -3,10 +3,8 @@
 // long or private goes to $.ui.log / toast instead and the command returns {}.
 import type { CommandRunResult } from 'claude-code'
 
-import { addFacts, contextKey, readDigest, readFacts } from './context'
-import { calibrate, formatCalibration, listRecords, parseFeedback } from './feedback'
 import { notionProbe } from './notion'
-import { change, confirmDelete, refresh, digestNow, digestWords, dropReason, syncPull, syncPushAll, syncStatus, giveFeedback, projectKey, startNote, type Options } from './notes'
+import { change, confirmDelete, dropReason, syncPull, syncPushAll, syncStatus, startNote, type Options } from './notes'
 import type { Ports } from './ports'
 import { setActive } from './tree'
 
@@ -14,11 +12,9 @@ export const COMMAND = 'sticky-note'
 
 export const COMMAND_SPEC = {
   name: COMMAND,
-  description: 'Sticky Notes: open/close the pane, or on | off | new | back | rm | timeout | provider | every | ctx | notion | feedback | calibrate | doctor',
-  argumentHint: '[new <問題> | back | provider claude|openai | every <n> | ctx [add <文字> | rm <n> | refresh] | feedback … | calibrate]',
+  description: 'Sticky Notes: open/close the pane, or new | back | rm | provider | notion | doctor',
+  argumentHint: '[new <問題> | back | rm | provider claude|openai | notion … | doctor]',
 }
-
-const CHOICE_NAME = { main: '主線', new: '新的便利貼', followup: '追問' } as const
 
 /**
  * /sn: the keyboard way to the pane. The status line cannot be clicked, a plugin
@@ -31,7 +27,7 @@ export const SHORT_COMMAND = 'sn'
 export const SHORT_COMMAND_SPEC = {
   name: SHORT_COMMAND,
   description: 'Sticky Notes: open/close the pane (short for /sticky-note)',
-  argumentHint: '[new <問題> | back | provider claude|openai | every <n> | ctx …]',
+  argumentHint: '[new <問題> | back | rm | provider claude|openai | notion …]',
 }
 
 const LATER: Record<string, string> = {
@@ -81,17 +77,6 @@ export async function runCommand(p: Ports, opts: Options, args: string): Promise
       p.ui.toast(dropReason(rest))
       return {}
     }
-    case 'on':
-    case 'off': {
-      // the mod's main switch: off, Jev reads nothing and no dialog shows; notes stay, /sn new works
-      const on = sub === 'on'
-      const r = await p.setOption('routing', on)
-      if (!r.ok) return { text: `沒有改成功：${r.reason}` }
-      opts.routing = on
-      await p.state.contextChanged()
-      await p.state.publishTree(await refresh(p)) // the status line says 已暫停 / not
-      return { text: on ? 'Sticky Notes 開啟：Jev 會判斷每一句，必要時跳對話框。' : 'Sticky Notes 暫停：每一句都直接進主線，不送 Jev、不跳對話框。便利貼和 /sn new 照常可用；/sn on 恢復。' }
-    }
     case 'rm': {
       // the note the pane has open (its thread runs through it), as ✕ does
       const id = await p.state.selected()
@@ -99,27 +84,9 @@ export async function runCommand(p: Ports, opts: Options, args: string): Promise
       const n = await confirmDelete(p, opts, id)
       return n > 0 ? {} : { text: '沒有刪除' }
     }
-    case 'timeout': {
-      // seconds the Jev dialog waits before the prompt goes to the main line; 0 waits forever
-      if (rest === '') return { text: opts.askTimeout > 0 ? `對話框 ${opts.askTimeout} 秒沒回應就送進主線。調整：/sn timeout <秒>（0 = 一直等）` : '對話框會一直等到你回答。調整：/sn timeout <秒>' }
-      const n = Number(rest)
-      if (!Number.isInteger(n) || n < 0 || n > 600) return { text: '用法：/sn timeout <0–600 的整數秒數>（0 = 一直等）' }
-      const r = await p.setOption('askTimeout', n)
-      if (!r.ok) return { text: `沒有改成功：${r.reason}` }
-      opts.askTimeout = n
-      p.ui.toast(n > 0 ? `Sticky Notes：對話框 ${n} 秒沒回應就送進主線` : 'Sticky Notes：對話框會一直等')
-      return {}
-    }
     case 'back': {
       const sessionId = await p.sessionId()
       await change(p, t => setActive(t, sessionId, null))
-      return {}
-    }
-    case 'feedback': {
-      const fb = parseFeedback(rest)
-      if (fb === null) return { text: '用法：/sn feedback main|new|followup（這句應該是什麼），或 good（現在這樣就對）' }
-      const record = await giveFeedback(p, fb)
-      p.ui.toast(record ? `已記下：上一句應該是 ${CHOICE_NAME[record.choice ?? 'main']}` : '這個 session 還沒有可以回饋的路由紀錄')
       return {}
     }
     case 'notion': {
@@ -150,7 +117,7 @@ export async function runCommand(p: Ports, opts: Options, args: string): Promise
       return {}
     }
     case 'provider': {
-      // the summary layer: titles, summaries, the main digest (Claude subscription or OpenAI free tier)
+      // the summary layer: titles, summaries, knowledge answers (Claude subscription or OpenAI free tier)
       const v = rest.toLowerCase()
       if (v === '') return { text: `統整層目前用 ${opts.summaryProvider === 'openai' ? 'OpenAI' : 'Claude'}。切換：/sn provider claude 或 /sn provider openai` }
       if (v !== 'claude' && v !== 'openai') return { text: '用法：/sn provider claude|openai' }
@@ -158,57 +125,6 @@ export async function runCommand(p: Ports, opts: Options, args: string): Promise
       if (!r.ok) return { text: `沒有改成功：${r.reason}` }
       opts.summaryProvider = v
       p.ui.toast(`Sticky Notes：統整層改用 ${v === 'claude' ? 'Claude' : 'OpenAI'}`)
-      return {}
-    }
-    case 'every': {
-      // R4: the main-line digest and the project context every n main turns; 0 turns them off
-      if (rest === '') return { text: `目前${opts.digestEvery > 0 ? `每 ${opts.digestEvery} 回合背景統整一次` : '不做背景統整'}。調整：/sn every <回合數>（0 = 關閉）` }
-      const n = Number(rest)
-      if (!Number.isInteger(n) || n < 0 || n > 100) return { text: '用法：/sn every <0–100 的整數>（0 = 關閉）' }
-      const r = await p.setOption('digestEvery', n)
-      if (!r.ok) return { text: `沒有改成功：${r.reason}` }
-      opts.digestEvery = n
-      p.ui.toast(n > 0 ? `Sticky Notes：每 ${n} 回合背景統整一次` : 'Sticky Notes：背景統整已關閉')
-      return {}
-    }
-    case 'ctx': {
-      // R4: the project context (only ever added to by the summary layer) and this session's digest
-      const root = await projectKey(p)
-      const [verb = '', ...words] = rest.split(/\s+/)
-      const arg = words.join(' ').trim()
-      const facts = await readFacts(p.store, root)
-      if (verb === 'add') {
-        if (arg === '') return { text: '用法：/sn ctx add <一條專案脈絡>' }
-        const fact = { id: crypto.randomUUID(), text: [...arg].slice(0, 200).join(''), at: await p.now(), sessionId: await p.sessionId(), source: 'manual' as const }
-        await p.store.set(contextKey(root), addFacts(facts, [fact]))
-        await p.state.contextChanged()
-        p.ui.toast('Sticky Notes：已加入專案脈絡')
-        return {}
-      }
-      if (verb === 'rm') {
-        const i = Number(arg) - 1
-        if (!Number.isInteger(i) || i < 0 || i >= facts.length) return { text: `用法：/sn ctx rm <1–${facts.length}>` }
-        await p.store.set(contextKey(root), facts.filter((_, k) => k !== i))
-        await p.state.contextChanged()
-        p.ui.toast(`Sticky Notes：已刪除第 ${i + 1} 條`)
-        return {}
-      }
-      if (verb === 'refresh') {
-        p.ui.toast('Sticky Notes：背景統整中…（結果會顯示在 pane 的「專案脈絡」卡片）')
-        p.later(() => void digestNow(p, opts, true).then(r => p.ui.toast(`Sticky Notes：${digestWords(r)}`)))
-        return {}
-      }
-      if (verb !== '') return { text: '用法：/sn ctx [add <文字> | rm <n> | refresh]' }
-      // the list stays out of the transcript (a command's text is a row the model reads)
-      const digest = await readDigest(p.store, root, await p.sessionId())
-      p.ui.log(`主線摘要（這個 session）：${digest?.text ?? '還沒有'}`)
-      if (facts.length === 0) p.ui.log('專案脈絡：還沒有。背景統整會自動加，或用 /sn ctx add <文字>')
-      facts.forEach((f, k) => p.ui.log(`${k + 1}. ${f.text}${f.source === 'manual' ? '（手動）' : ''}`))
-      return {}
-    }
-    case 'calibrate': {
-      const lines = formatCalibration(calibrate(await listRecords(p.store, await projectKey(p))))
-      for (const line of lines) p.ui.log(line)
       return {}
     }
     default: {

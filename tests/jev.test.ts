@@ -2,116 +2,50 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { buildForkPrompt } from '../hooks/answer'
 import { parseTitleSummary } from '../hooks/digest'
-import { buildRequest, buildState, classify, NEW_TAG, NO_NOTE, parseResponse, type JevInput } from '../hooks/jev'
+import { callJev, JEV_MODEL, JEV_URL, type JevRequest } from '../hooks/jev'
 
-const input = (over: Partial<JevInput> = {}): JevInput => ({
-  digest: null,
-  facts: [],
-  recentUser: ['u1', 'u2', 'u3', 'u4'],
-  lastAssistant: 'a'.repeat(400),
-  activeTitle: null,
-  activeLastQuestion: null,
-  mainTurnsSinceLastSidebar: 3,
-  prompt: '為什麼 TCP 要三次握手？',
-  tags: [],
-  candidates: [],
-  ...over,
-})
+const request: JevRequest = { state: '[new prompt]\n為什麼 TCP 要三次握手？', questions: { kind: { type: 'noul', instructions: 'x' } } }
 
-describe('jev request', () => {
-  test('state keeps the last 3 user prompts and the reply\'s last 300 chars (its conclusion)', () => {
-    const s = buildState(input({ lastAssistant: 'b'.repeat(100) + 'a'.repeat(300) }))
-    expect(s).not.toContain('user: u1')
-    expect(s).toContain('user: u4')
-    expect(s).toContain(`assistant: …${'a'.repeat(300)}`)
-    expect(s).not.toContain('[main-line digest]')
-    expect(s).toContain('active_thread_title: none')
-    expect(s).toContain('main_turns_since_last_sidebar: 3')
-    expect(s.endsWith('[new prompt]\n為什麼 TCP 要三次握手？')).toBe(true)
-  })
-
-  test('the tag question appears only when tags exist, with __new__', () => {
-    const none = buildRequest(input()) as { questions: Record<string, unknown> }
-    expect(none.questions.tag).toBeUndefined()
-    const some = buildRequest(input({ tags: ['db'] })) as { questions: { tag: { criteria: Record<string, string> } } }
-    expect(Object.keys(some.questions.tag.criteria)).toEqual(['db', NEW_TAG])
-  })
-})
-
-describe('jev state with the R4 digest', () => {
-  test('the main-line digest and the project facts come first, when there are any', () => {
-    const s = buildState(input({ digest: '主線在把 auth 改成 session cookie，剩 token 輪替。', facts: ['我們用 session cookie，不用 JWT'] }))
-    expect(s.startsWith('[main-line digest]\n主線在把 auth 改成 session cookie')).toBe(true)
-    expect(s).toContain('[project facts]\n- 我們用 session cookie，不用 JWT')
-    expect(s.indexOf('[project facts]')).toBeLessThan(s.indexOf('[recent main-line context]'))
-  })
-})
-
-describe('jev continues', () => {
-  test('the continues question lists the recent notes and none, only when there are some', () => {
-    const none = buildRequest(input()) as { questions: Record<string, unknown> }
-    expect(none.questions.continues).toBeUndefined()
-    const some = buildRequest(input({ candidates: [{ key: 'n1', title: 'TCP 背壓', question: 'backpressure 是什麼？' }] })) as {
-      questions: { continues: { criteria: Record<string, string> } }
-    }
-    expect(Object.keys(some.questions.continues.criteria)).toEqual(['n1', NO_NOTE])
-    expect(some.questions.continues.criteria.n1).toContain('TCP 背壓')
-  })
-
-  test('the answer carries the pick and each probability', () => {
-    const v = parseResponse({
-      answers: {
-        route: { type: 'choice', choice: 'sidebar_knowledge', confidence: 0.9 },
-        is_followup: { type: 'noul', noul: 0.1 },
-        needs_project_ctx: { type: 'noul', noul: 0.1 },
-        continues: { type: 'choice', choice: 'n2', confidence: 0.7, probabilities: { n1: 0.2, n2: 0.7, none: 0.1 } },
-      },
-    })
-    expect(v?.continues).toEqual({ label: 'n2', confidence: 0.7, probabilities: { n1: 0.2, n2: 0.7, none: 0.1 } })
-  })
-})
-
-describe('jev response', () => {
-  const ok = {
-    answers: {
-      route: { type: 'choice', choice: 'sidebar_knowledge', confidence: 0.91, probabilities: {} },
-      is_followup: { type: 'noul', noul: 0.2 },
-      needs_project_ctx: { type: 'noul', noul: 0.7 },
-    },
-  }
-
-  test('parses the documented shape', () => {
-    expect(parseResponse(ok)).toEqual({ route: { label: 'sidebar_knowledge', confidence: 0.91 }, isFollowup: 0.2, needsProjectCtx: 0.7 })
-  })
-
-  test('rejects unknown routes and missing answers', () => {
-    expect(parseResponse({ answers: { ...ok.answers, route: { type: 'choice', choice: 'other', confidence: 1 } } })).toBeNull()
-    expect(parseResponse({})).toBeNull()
-    expect(parseResponse(null)).toBeNull()
-  })
-
-  test('classify without a key reports no-key and never fetches', async () => {
+describe('jev transport', () => {
+  test('without a key it reports no-key and never fetches', async () => {
     let fetched = 0
-    const r = await classify({ key: undefined, fetch: async () => { fetched++; throw new Error('no') }, now: async () => 0 }, input())
+    const r = await callJev({ key: undefined, fetch: async () => { fetched++; throw new Error('no') }, now: async () => 0 }, request)
     expect(r).toMatchObject({ ok: false, reason: 'no-key' })
     expect(fetched).toBe(0)
   })
 
-  test('classify sends a bearer key and maps a 403 to http', async () => {
+  test('POSTs the model, the state and the questions with a bearer key, and hands back the parsed body', async () => {
+    let url = ''
     let auth = ''
-    const r = await classify(
+    let sent: unknown = null
+    const r = await callJev(
       {
         key: 'k',
-        fetch: async (_u, init) => {
+        fetch: async (u, init) => {
+          url = u
           auth = (init?.headers as Record<string, string>).authorization ?? ''
-          return { status: 403, ok: false, headers: {}, text: '{"detail":{}}' }
+          sent = JSON.parse(String(init?.body))
+          return { status: 200, ok: true, headers: {}, text: '{"answers":{"kind":{"type":"noul","noul":0.8}}}' }
         },
         now: async () => 0,
       },
-      input(),
+      request,
     )
+    expect(url).toBe(JEV_URL)
     expect(auth).toBe('Bearer k')
-    expect(r).toMatchObject({ ok: false, reason: 'http', status: 403 })
+    expect(sent).toEqual({ model: JEV_MODEL, state: request.state, questions: request.questions })
+    expect(r).toMatchObject({ ok: true, body: { answers: { kind: { noul: 0.8 } } } })
+  })
+
+  test('maps a 403 to http, a body that is not JSON to bad-response, a throw to network', async () => {
+    const via = (fetch: () => Promise<{ status: number; ok: boolean; headers: Record<string, string>; text: string }>) => callJev({ key: 'k', fetch, now: async () => 0 }, request)
+    expect(await via(async () => ({ status: 403, ok: false, headers: {}, text: '{"detail":{}}' }))).toMatchObject({ ok: false, reason: 'http', status: 403 })
+    expect(await via(async () => ({ status: 200, ok: true, headers: {}, text: 'nope' }))).toMatchObject({ ok: false, reason: 'bad-response', status: 200 })
+    expect(
+      await via(async () => {
+        throw new Error('offline')
+      }),
+    ).toMatchObject({ ok: false, reason: 'network' })
   })
 })
 
@@ -125,15 +59,5 @@ describe('summary + fork prompts', () => {
     const p = buildForkPrompt([{ question: 'Q?', answer: 'A.' }], 'Next?')
     expect(p).toContain('Q1: Q?\nA1: A.')
     expect(p.endsWith('[question]\nNext?')).toBe(true)
-  })
-})
-
-describe('jev state stays small', () => {
-  test('a pasted wall of text is cut to 1500 characters, the last question to 300', () => {
-    const s = buildState(input({ prompt: 'x'.repeat(12000), activeTitle: 't', activeLastQuestion: 'y'.repeat(12000) }))
-    expect(s).toContain('x'.repeat(1500) + '…')
-    expect(s).not.toContain('x'.repeat(1501))
-    expect(s).toContain('active_thread_last_question: ' + 'y'.repeat(300) + '…')
-    expect(s.length).toBeLessThan(3000)
   })
 })

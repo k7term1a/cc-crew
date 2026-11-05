@@ -1,5 +1,5 @@
 // Summary layer jobs. M1: the automatic title + three-sentence summary per node.
-// Outline / main digest / tag merge / digest-export are manual jobs for M3–M4.
+// Outline / tag merge / digest-export are manual jobs for M3–M4 (the R4 main digest is gone, 11/05).
 import type { SummaryProvider } from './providers/types'
 import { fallbackTitle, TITLE_MAX } from './tree'
 

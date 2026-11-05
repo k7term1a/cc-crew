@@ -2,7 +2,7 @@
 // Data model (PLAN.md「資料模型」) plus the $.state values the pane draws from.
 // Self-contained: no imports. Hooks modules import these from '../types'.
 
-/** How a prompt was routed. `ask` = the user picked in $.ui.ask. */
+/** How a note was made. `manual` since 11/05; `jev` and `ask` (the old routing dialog) stay on older notes. */
 export type RouteSource = 'jev' | 'ask' | 'manual'
 
 /** Who wrote a node's answer. */
@@ -35,7 +35,7 @@ export type TreeNode = {
   /** Three sentences; null until the summary layer fills it. */
   summary: string | null
   tags: string[]
-  /** `jev`: Jev's route (main_task | sidebar_knowledge | project_question), the card's category; absent when Jev never saw it. */
+  /** `jev`: Jev's route (main_task | sidebar_knowledge | project_question), the card's category; only on notes from before 11/05 that Jev saw. */
   route: { label: string; confidence: number; source: RouteSource; jev?: string }
   promotedAt: number | null
   /** The session it was promoted in (promotion only goes into the current session). */
@@ -85,34 +85,6 @@ export type Tree = {
   mainDigest: MainDigest | null
 }
 
-/** What the user can pick in the routing dialog (or say afterwards with /sn feedback). */
-export type AskChoice = 'followup' | 'new' | 'main'
-
-/**
- * One routing decision kept for calibrating the thresholds: Jev's call, its
- * confidence and the user's choice. $.store `feedback:<root>:<id>`, local only,
- * capped per project. Written for every prompt Jev saw.
- */
-export type FeedbackRecord = {
-  id: string
-  at: number
-  sessionId: string
-  /** First 200 characters of the prompt. Stays in the local store. */
-  prompt: string
-  /** Jev's answer (route, its confidence, and the other questions). */
-  jev: { route: string; confidence: number; isFollowup: number; needsProjectCtx: number; tag: string | null }
-  thresholds: { route: number; followup: number; needsCtx: number }
-  /** Whether the dialog was shown. */
-  asked: boolean
-  /** What happened: the user's pick, or the main line / project question Jev let through. */
-  outcome: AskChoice | 'project_question'
-  /** The user's choice: in the dialog, or later with /sn feedback; null while they said nothing. */
-  choice: AskChoice | null
-  choiceSource: 'ask' | 'command' | null
-  /** The node it made, if any. */
-  nodeId: string | null
-}
-
 declare module 'claude-code' {
   interface PluginState {
     'cc-sticky-notes': {
@@ -122,14 +94,8 @@ declare module 'claude-code' {
       selectedId: string | null
       /** The question the pane is rewriting in place (✎), if any. */
       editingId: string | null
-      /** Bumped when the digest or the project context changes in the store, so the pane draws again. */
-      contextRev: number
-      /** R4: the digest run of this session: running now, or when the last one ended and how (in words). */
-      digestStatus: { running: boolean; at: number | null; result: string | null }
-      /** R7: the prompt Jev heard "you broke a rule" in; the pane asks which rules compaction keeps until 完成. */
-      reminder: { prompt: string; at: number } | null
-      /** R7: the session last compacted here: its next context is not a new session's, no rules block. */
-      compactedIn: string | null
+      /** Bumped when a setting changes, so the pane's settings card draws again. */
+      settingsRev: number
       /** Unread sidebar answers since the pane was last opened (badge count). */
       unread: number
       /** "只看本 session" filter. */
@@ -141,12 +107,8 @@ declare module 'claude-code' {
       pending: number
       /** Last main-line turnId seen at turn.start (prompt.submit has none while idle). */
       lastTurnId: string | null
-      /** $.session.turns() when the last sidebar note was made; feeds main_turns_since_last_sidebar. */
-      turnsAtLastSidebar: number
       /** uuid of the last main-line user message (session.append door='prompt'). */
       lastPromptUuid: string | null
-      /** The last feedback record of this session, for /sn feedback. */
-      lastSampleId: string | null
     }
   }
 }

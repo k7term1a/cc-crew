@@ -19,37 +19,22 @@
 import type { ElementTable, RenderElement, RenderSurface } from 'claude-code'
 
 import type { Tree, TreeNode } from '../types'
-import { cardsOf, type RuleKind } from './context'
-import { ROUTE_NAME } from './route'
 import { pathTo, rootOf } from './tree'
 
 export const PANE_ID = 'sticky'
 export const PANE_TITLE = 'Sticky Notes'
-/** The selection that opens the project-context card (R4) instead of a topic. */
-export const CONTEXT_CARD = '__context__'
 /** The selection that opens the settings card (the mod's switches, 10/19). */
 export const SETTINGS_CARD = '__settings__'
-/** R7: the selection that opens a rule card: this, then the card's title. */
-export const RULE_CARD = '__rule__:'
-/** R7: the selection the reminder sets (no card is open under it). */
-export const REMINDER_CARD = '__reminder__'
-
-/** R7: a project rule as the pane shows it. */
-export type Fact = { id: string; text: string; source: 'auto' | 'manual'; card?: string; kind?: RuleKind; keep?: boolean; at: number }
 
 /** The switches the settings card shows, as this machine has them. */
 export type Settings = {
-  routing: boolean
   autoOpenPane: boolean
   notionSync: boolean
   /** A Notion data source is set (the sync switch means nothing without one). */
   notionSet: boolean
-  digestEvery: number
-  askTimeout: number
   provider: 'claude' | 'openai'
-  ruleReminder: boolean
 }
-export type SettingField = 'routing' | 'autoOpenPane' | 'notionSync' | 'digestEvery' | 'askTimeout' | 'summaryProvider' | 'ruleReminder'
+export type SettingField = 'autoOpenPane' | 'notionSync' | 'summaryProvider'
 
 /** P9: an answer that did not come from the fork had no project context. */
 export function contextMark(n: TreeNode): string {
@@ -122,15 +107,6 @@ export type PaneData = {
   sessionId: string
   pending: number
   surface: RenderSurface
-  /** R4: this session's main-line digest, the project facts, and how they are kept. */
-  digest: string | null
-  facts: readonly Fact[]
-  /** R7: the prompt Jev heard "you broke a rule" in, until 完成. */
-  reminder: { prompt: string; at: number } | null
-  digestEvery: number
-  provider: 'claude' | 'openai'
-  /** The last digest run of this session: running, or when it ended and how (in words). */
-  digestStatus: { running: boolean; at: number | null; result: string | null }
   settings: Settings
 }
 
@@ -139,27 +115,15 @@ export type PaneActions = {
   select(id: string | null): void
   /** Starts (an id) or ends (null) rewriting a question in place. */
   edit(id: string | null): void
-  /** The reply box: a follow-up under this note, not routed through Jev. */
+  /** The reply box: a follow-up under this note. */
   followUp(parentId: string, question: string): void
   /** A rewritten question: asked again beside the old one (a new topic for a first question). */
   rewrite(nodeId: string, question: string): void
   /** ✕: asks, then deletes this note and the follow-ups under it (this computer only). */
   remove(nodeId: string): void
-  /** R4 / R7: a rule added by hand (to a card, else a card of its own), deleted, kept or not; a digest run now. */
-  addFact(text: string, card?: string): void
-  removeFact(id: string): void
-  toggleKeep(id: string): void
-  refreshDigest(): void
-  /** R7: the reminder card answered. */
-  doneReminder(): void
   /** The settings card: one switch or choice, this machine's own, at once. */
   setSetting(field: SettingField, value: string | number | boolean): void
 }
-
-/** Choices a setting cycles through on each press (a Button is the one control every surface draws). */
-const DIGEST_STEPS = [0, 1, 3, 5, 10]
-const TIMEOUT_STEPS = [0, 15, 30, 60, 120]
-const nextOf = (steps: readonly number[], now: number) => steps[(steps.indexOf(now) + 1) % steps.length] ?? steps[0]!
 
 /**
  * The settings card, last in the pane: the mod's switches (what Desktop's own environment
@@ -172,7 +136,7 @@ function settingsCard(els: ElementTable, d: PaneData, act: PaneActions): RenderE
   if (!open) {
     return (
       <Box key="card:settings" borderStyle="round" borderDimColor paddingX={1}>
-        <Button key="open:settings" plain dimColor label={`設定　${s.routing ? '自動判斷開' : '已暫停'}`} onPress={() => act.select(SETTINGS_CARD)} />
+        <Button key="open:settings" plain dimColor label="設定" onPress={() => act.select(SETTINGS_CARD)} />
       </Box>
     )
   }
@@ -189,11 +153,7 @@ function settingsCard(els: ElementTable, d: PaneData, act: PaneActions): RenderE
   return (
     <Box key="card:settings" flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
       <Button key="close:settings" plain label="設定" onPress={() => act.select(null)} />
-      {row('ruleReminder', '規範提醒', onOff(s.ruleReminder), () => act.setSetting('ruleReminder', !s.ruleReminder), 'Jev 聽到「怎麼沒照規範」時打開這裡，問哪些規範要在壓縮時保留')}
-      {row('routing', '自動判斷', onOff(s.routing), () => act.setSetting('routing', !s.routing), '關掉後每一句都直接進主線，不送 Jev、不跳對話框')}
-      {row('timeout', '對話框逾時', s.askTimeout > 0 ? `${s.askTimeout} 秒` : '一直等', () => act.setSetting('askTimeout', nextOf(TIMEOUT_STEPS, s.askTimeout)))}
       {row('autoOpen', '答案回來時打開 pane', onOff(s.autoOpenPane), () => act.setSetting('autoOpenPane', !s.autoOpenPane))}
-      {row('digest', '背景統整', s.digestEvery > 0 ? `每 ${s.digestEvery} 回合` : '關', () => act.setSetting('digestEvery', nextOf(DIGEST_STEPS, s.digestEvery)))}
       {row('provider', '統整層', s.provider === 'openai' ? 'OpenAI' : 'Claude', () => act.setSetting('summaryProvider', s.provider === 'openai' ? 'claude' : 'openai'))}
       {s.notionSet
         ? row('notion', 'Notion 同步', onOff(s.notionSync), () => act.setSetting('notionSync', !s.notionSync))
@@ -205,12 +165,14 @@ function settingsCard(els: ElementTable, d: PaneData, act: PaneActions): RenderE
 
 /**
  * The card's category: what Jev called the first question (the developer, 10/14), in the
- * dialog's words. Translucent backgrounds, legible on the dark theme and the light one.
+ * old routing dialog's words. Only notes made while Jev routed prompts (before 11/05) carry
+ * one; it is drawn from their stored route. Translucent backgrounds, legible on the dark
+ * theme and the light one.
  */
 export const CATEGORY: Record<string, { name: string; color: string }> = {
-  sidebar_knowledge: { name: ROUTE_NAME.sidebar_knowledge, color: '#378ADD40' },
-  project_question: { name: ROUTE_NAME.project_question, color: '#1D9E7540' },
-  main_task: { name: ROUTE_NAME.main_task, color: '#BA751740' },
+  sidebar_knowledge: { name: '知識旁問', color: '#378ADD40' },
+  project_question: { name: '專案疑問', color: '#1D9E7540' },
+  main_task: { name: '主線任務', color: '#BA751740' },
 }
 
 /** The category as a chip: its own background on Desktop; the terminal has no translucency, so it is dim. */
@@ -272,187 +234,6 @@ function editor(els: ElementTable, node: TreeNode, act: PaneActions): RenderElem
   )
 }
 
-/**
- * R4: this session's main-line digest, closed to one line; open, the digest, how often it
- * runs, and a run now (which also gathers the rules below).
- */
-function contextCard(els: ElementTable, d: PaneData, act: PaneActions): RenderElement {
-  const { Box, Text, Button } = els
-  const open = d.selectedId === CONTEXT_CARD
-  if (!open) {
-    return (
-      <Box key="card:context" borderStyle="round" borderDimColor paddingX={1}>
-        <Button key="open:context" plain dimColor label="主線摘要" onPress={() => act.select(CONTEXT_CARD)} />
-      </Box>
-    )
-  }
-  const how = d.digestEvery > 0 ? `每 ${d.digestEvery} 回合背景統整 · ${d.provider === 'openai' ? 'OpenAI' : 'Claude'}` : '背景統整已關閉（設定）'
-  return (
-    <Box key="card:context" flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
-      <Box justifyContent="space-between">
-        <Button key="close:context" plain label="主線摘要" onPress={() => act.select(null)} />
-        <Text dimColor>{how}</Text>
-      </Box>
-      <Text>{d.digest ?? '還沒有：主線跑過幾個回合後會出現。'}</Text>
-      <Box flexDirection="row" columnGap={2} alignItems="center">
-        {d.digestStatus.running ? (
-          <Text color="claude">統整中…</Text>
-        ) : (
-          <Button key="digest-now" plain dimColor label="立即統整" onPress={() => act.refreshDigest()} />
-        )}
-        {!d.digestStatus.running && d.digestStatus.at !== null && (
-          <Text dimColor>{`上次 ${when(d.digestStatus.at).slice(6)}：${d.digestStatus.result ?? ''}`}</Text>
-        )}
-      </Box>
-    </Box>
-  )
-}
-
-/** R7: a rule's kind as a chip, like the notes' categories. */
-const KIND: Record<RuleKind, { name: string; color: string }> = {
-  rule: { name: '規範', color: '#D4537E40' },
-  habit: { name: '習慣', color: '#7F77DD40' },
-  caution: { name: '注意', color: '#E24B4A40' },
-  decision: { name: '決策', color: '#63992240' },
-}
-
-function kindChip(els: ElementTable, surface: RenderSurface, key: string, kind: RuleKind | null | undefined): RenderElement | null {
-  const { Text } = els
-  const k = kind ? KIND[kind] : undefined
-  if (!k) return null
-  return surface === 'terminal' ? (
-    <Text key={key} dimColor>{`[${k.name}]`}</Text>
-  ) : (
-    <Text key={key} backgroundColor={k.color}>{` ${k.name} `}</Text>
-  )
-}
-
-/** One rule: ● kept through compaction (a press flips it), the text, ✕. */
-function ruleRow(els: ElementTable, f: Fact, act: PaneActions, showKind: RenderElement | null): RenderElement {
-  const { Box, Text, Button } = els
-  return (
-    <Box key={`fact:${f.id}`} flexDirection="row" alignItems="center" columnGap={1}>
-      <Button key={`keep:${f.id}`} dimColor={!f.keep} label={f.keep ? '● 保留' : '○ 保留'} onPress={() => act.toggleKeep(f.id)} />
-      {showKind}
-      <Box flexGrow={1}>
-        <Text>{`${clip(f.text, 200)}${f.source === 'manual' ? '（手動）' : ''}`}</Text>
-      </Box>
-      <Button key={`fact-rm:${f.id}`} plain dimColor label="✕" onPress={() => act.removeFact(f.id)} />
-    </Box>
-  )
-}
-
-/**
- * R7: the project's rules, one card per context (like the notes), each fact marked
- * ● when compaction keeps it word for word. All of them reach a new session and a
- * compacted one; the kept ones first and whole.
- */
-function ruleCards(els: ElementTable, d: PaneData, act: PaneActions): RenderElement[] {
-  const { Box, Text, Button } = els
-  const Input = 'Input' in els ? els.Input : undefined
-  return cardsOf(d.facts).map(c => {
-    const id = `${RULE_CARD}${c.title}`
-    const kept = c.facts.filter(f => f.keep).length
-    const meta = `${c.facts.length} 條${kept > 0 ? ` · 保留 ${kept}` : ''}`
-    const chip = kindChip(els, d.surface, `kind:${c.title}`, c.kind)
-    if (d.selectedId !== id) {
-      return (
-        <Box key={`card:${id}`} flexDirection="row" alignItems="center" columnGap={1} borderStyle="round" borderDimColor paddingX={1}>
-          <Box flexGrow={1}>
-            <Button key={`open:${id}`} plain label={c.title} onPress={() => act.select(id)} />
-          </Box>
-          {chip}
-          <Button key={`open-meta:${id}`} plain dimColor label={meta} onPress={() => act.select(id)} />
-        </Box>
-      )
-    }
-    return (
-      <Box key={`card:${id}`} flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
-        <Box flexDirection="row" alignItems="center" columnGap={1}>
-          <Box flexGrow={1}>
-            <Button key={`close:${id}`} plain label={c.title} onPress={() => act.select(null)} />
-          </Box>
-          {chip}
-          <Text dimColor>{meta}</Text>
-        </Box>
-        <Box flexDirection="column">
-          {c.facts.map(f => ruleRow(els, f, act, f.kind !== c.kind ? kindChip(els, d.surface, `kind:${f.id}`, f.kind) : null))}
-        </Box>
-        {Input && (
-          <Input
-            key={`fact-add:${c.title}:${c.facts.length}`}
-            value=""
-            placeholder="加一條到這張卡…"
-            submitLabel="↵"
-            onSubmit={v => {
-              if (v.trim() !== '') act.addFact(v.trim(), c.title)
-            }}
-          />
-        )}
-      </Box>
-    )
-  })
-}
-
-/**
- * R7: Jev heard "you broke a rule": the prompt, and every rule to mark which ones
- * compaction keeps word for word. 完成 puts the card away.
- */
-function reminderCard(els: ElementTable, d: PaneData, act: PaneActions): RenderElement | null {
-  const { Box, Text, Button } = els
-  if (d.reminder === null) return null
-  const cards = cardsOf(d.facts)
-  return (
-    <Box key="card:reminder" flexDirection="column" borderStyle="round" borderColor="warning" paddingX={1} gap={1}>
-      <Box flexDirection="row" alignItems="center" columnGap={1}>
-        <Box flexGrow={1}>
-          <Text bold>哪些規範要在壓縮時保留？</Text>
-        </Box>
-        <Button key="reminder-done" label="完成" onPress={() => act.doneReminder()} />
-      </Box>
-      <Text dimColor>{`你剛剛說：「${clip(d.reminder.prompt, 120)}」`}</Text>
-      {cards.length === 0 && <Text dimColor>還沒有規範。背景統整會自動整理，也可以在下面自己加。</Text>}
-      {cards.map(c => (
-        <Box key={`reminder:${c.title}`} flexDirection="column">
-          <Text dimColor>{c.title}</Text>
-          {c.facts.map(f => ruleRow(els, f, act, kindChip(els, d.surface, `kind:${f.id}`, f.kind)))}
-        </Box>
-      ))}
-      <Text dimColor>● 保留：壓縮時原文寫進摘要，新 session 與壓縮後最先提醒 Claude。這次的提醒已經隨你的訊息送出。</Text>
-    </Box>
-  )
-}
-
-/** R7: the rules' heading, the reminder, the cards, and a box for a rule of one's own. */
-function rulesSection(els: ElementTable, d: PaneData, act: PaneActions): RenderElement {
-  const { Box, Text } = els
-  const Input = 'Input' in els ? els.Input : undefined
-  const cards = cardsOf(d.facts).length
-  const kept = d.facts.filter(f => f.keep).length
-  return (
-    <Box key="rules" flexDirection="column" gap={1}>
-      <Box justifyContent="space-between">
-        <Text bold>專案規範</Text>
-        <Text dimColor>{`${cards} 張 · ${d.facts.length} 條${kept > 0 ? ` · 保留 ${kept}` : ''}`}</Text>
-      </Box>
-      {reminderCard(els, d, act)}
-      {d.facts.length === 0 && d.reminder === null && <Text dimColor>還沒有。背景統整會自動整理規範、習慣與決策，也可以在下面自己加。</Text>}
-      {ruleCards(els, d, act)}
-      {Input && (
-        <Input
-          key={`fact-add:new:${d.facts.length}`}
-          value=""
-          placeholder="加一條規範…"
-          submitLabel="↵"
-          onSubmit={v => {
-            if (v.trim() !== '') act.addFact(v.trim())
-          }}
-        />
-      )}
-    </Box>
-  )
-}
-
 export function paneView(els: ElementTable, d: PaneData, act: PaneActions): RenderElement {
   const { Box, Text, Button, Markdown } = els
   // mobile draws no Input (Elements): the reply box is left out there
@@ -472,7 +253,7 @@ export function paneView(els: ElementTable, d: PaneData, act: PaneActions): Rend
       </Box>
 
       {(tree === null || tree.roots.length === 0) && (
-        <Text dimColor>還沒有便利貼。在主輸入框問「為什麼／是什麼」，或用 /sn new &lt;問題&gt;。</Text>
+        <Text dimColor>還沒有便利貼。用 /sn new &lt;問題&gt; 開一張。</Text>
       )}
 
       {/* newest topic first */}
@@ -562,8 +343,6 @@ export function paneView(els: ElementTable, d: PaneData, act: PaneActions): Rend
           )
         })}
 
-      {rulesSection(els, d, act)}
-      {contextCard(els, d, act)}
       {settingsCard(els, d, act)}
     </Box>
   )
