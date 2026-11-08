@@ -143,7 +143,7 @@ describe('first prompt', () => {
     expect(ctx[0]).toContain('SendMessage')
     // nothing was sent yet: the listing is asked again; the status line shows the role
     expect(w.invalidated).toEqual(['prompt.attachment'])
-    expect(w.statuses.at(-1)).toMatch(new RegExp(`^main「${FIRST20}」 · 今日 Jev 1 次`))
+    expect(w.statuses.at(-1)).toBe(`main「${FIRST20}」`)
     // the next prompt: no Jev, no dialog, no brief
     w.session.messages = [user(KICKOFF), reply('好')]
     await $.prompt.submit(typed('開始吧'))
@@ -209,7 +209,7 @@ describe('first prompt', () => {
     expect(brief).toContain('只讀 R.md、p.jsonl、ev/')
     expect(brief).toContain('文件裡沒有')
     expect(brief).toContain('GAPS.md')
-    expect(w.statuses.at(-1)).toMatch(/^統整 ← auth 改版 · /)
+    expect(w.statuses.at(-1)).toBe('統整 ← auth 改版')
   })
 
   test('synthesis with no main in the project: no dialog', async ($, on) => {
@@ -282,7 +282,7 @@ describe('fork → sub, and the brief', () => {
     await $.session.start({ cwd: ROOT, surface: 'desktop', isInteractive: true })
     expect(w.get('F1')).toMatchObject({ role: 'sub', parentId: 'M1', briefed: false })
     expect(w.invalidated).toEqual([]) // it holds replies: the listing is never asked again
-    expect(w.statuses.at(-1)).toMatch(/^sub ← auth 改版 · /)
+    expect(w.statuses.at(-1)).toBe('sub ← auth 改版')
     // main's message arrives: it carries the sub's rules, once
     await $.prompt.submit({ text: '請實作 CSRF', origin: { kind: 'peer' } } as never)
     const brief = w.sent[0]!.context?.[0] ?? ''
@@ -375,7 +375,7 @@ describe('/sn tag', () => {
     expect(w.get('S1')).toMatchObject({ role: 'main', name: 'proj', docs: { record: 'RECORD.md' }, briefed: false })
     expect(w.get('S1')?.fingerprint).toBeUndefined()
     expect(w.invalidated).toEqual(['prompt.attachment'])
-    expect(w.statuses.at(-1)).toMatch(/^main「proj」 · /)
+    expect(w.statuses.at(-1)).toBe('main「proj」')
     w.jev = { kind: 'kickoff' }
     await $.prompt.submit(typed(KICKOFF))
     expect(w.jevBodies).toHaveLength(0) // it has a role: no classification
@@ -406,7 +406,7 @@ describe('/sn tag', () => {
     w.answers = ['統整', m1]
     expect(await $.command.run({ command: 'sn', args: 'tag' } as never)).toMatchObject({ text: expect.stringContaining('統整，屬於 main「auth 改版」') })
     expect(w.get('S1')).toMatchObject({ role: 'synthesis', parentId: 'M1', briefed: false })
-    expect(w.statuses.at(-1)).toMatch(/^統整 ← auth 改版 · /)
+    expect(w.statuses.at(-1)).toBe('統整 ← auth 改版')
   })
 
   test('清除, and a closed dialog', async ($, on) => {

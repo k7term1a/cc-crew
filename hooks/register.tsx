@@ -41,9 +41,9 @@ const kvOf = ($: EngineInterface) => ({
  * pending number or the role changes, and at session start.
  */
 async function refreshStatus($: EngineInterface) {
-  const usage = usageLine(await readUsage(kvOf($), new Date()), await read($, pendingAtom))
+  // the role only (11/08); the mod's own usage is in /sn doctor. Untagged: no status line
   const role = await roleLine(portsOf($)).catch(() => null)
-  $.ui.status(role === null ? usage : `${role} · ${usage}`)
+  $.ui.status(role ?? undefined)
 }
 
 /** Adds one request's cost to today's count; a failure to count never fails the request. */
@@ -106,6 +106,7 @@ function portsOf($: EngineInterface): Ports {
           describeKey('TYPESAFE_API_KEY', await findKey('TYPESAFE_API_KEY', await $.env.get('TYPESAFE_API_KEY'), files, readText)),
           describeKey('OPENAI_API_KEY', await findKey('OPENAI_API_KEY', await $.env.get('OPENAI_API_KEY'), files, readText)),
           `key 檔查找順序：${files.join(' → ')}`,
+          `這個 mod 今天用掉的（所有專案、所有 session 合計）：${usageLine(await readUsage(kvOf($), new Date()), await read($, pendingAtom))}`,
         ]
       },
     },
@@ -229,6 +230,20 @@ export const register: Register = (on, options) => {
     await tagFork(p).catch(err => p.ui.log(`sticky-notes: fork check failed (${String(err).slice(0, 200)})`, 'debug'))
     await refreshStatus($)
     return next(e)
+  })
+
+  // The status line is set again when a screen attaches and after each main turn: a Desktop
+  // fork starts with no screen attached, and per-prompt counting no longer redraws it (11/08)
+  on('session.attach', async ($, e, next) => {
+    const r = await next(e)
+    await refreshStatus($).catch(() => {})
+    return r
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    if (e.agentId === undefined) await refreshStatus($).catch(() => {})
+    return r
   })
 
   on('turn.start', async ($, e, next) => {

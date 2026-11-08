@@ -110,7 +110,7 @@ OPENAI_API_KEY=sk-...
 
 ### 狀態列
 
-輸入框下方右側的狀態列先顯示這個 session 的角色（`main「名稱」`、`sub ← main 的名稱`、`統整 ← main 的名稱`，沒標就不顯示），再顯示這個 mod 今天用掉的額度，例如 `cc-sticky-notes  今日 Jev 0 次 · Claude 35k`（用過 OpenAI 才會出現 OpenAI；Claude 的數字不含讀 cache 的部分；所有專案、所有 session 合計，每天歸零），還有幾則正在回答。
+輸入框下方右側的狀態列只顯示這個 session 的角色：`main「名稱」`、`sub ← main 的名稱`、`統整 ← main 的名稱`；沒標角色就不顯示。這個 mod 今天用掉的額度（Jev 次數、Claude / OpenAI token，所有專案、所有 session 合計，每天歸零）改在 `/sn doctor` 看（11/08）。
 
 ### 右側 pane
 
