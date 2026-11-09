@@ -4,7 +4,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On, SessionMessage } from 'claude-code'
 
-import { DOCS_OPTIONS, dropSkills, fingerprintOf, parseDeckSkills, parseDocs, roleKey, type RoleEntry } from '../hooks/roles'
+import { DOCS_OPTIONS, dropSkills, fingerprintOf, ORGANIZE_DOCS, parseDeckSkills, parseDocs, roleKey, type RoleEntry } from '../hooks/roles'
 
 const ROOT = '/proj'
 const KEY = (id: string) => roleKey(ROOT, id)
@@ -417,5 +417,51 @@ describe('/sn tag', () => {
     expect(await $.command.run({ command: 'sn', args: 'tag' } as never)).toMatchObject({ text: '已清除這個 session 的角色' })
     expect(w.get('S1')).toBeUndefined()
     expect(w.mem.has('role-none:/proj:S1')).toBe(true)
+  })
+})
+
+describe('documents of a main tagged mid-conversation (11/09)', () => {
+  test('a session that has talked is offered to organize first; the brief asks it to, until /sn docs', async ($, on) => {
+    const w = world(on)
+    w.session.messages = [user(KICKOFF), reply('好')]
+    w.answers = ['main', FIRST20, ORGANIZE_DOCS]
+    const r = await $.command.run({ command: 'sn', args: 'tag' } as never)
+    expect(w.asks[2]!.options).toEqual([...DOCS_OPTIONS, ORGANIZE_DOCS])
+    expect(r).toMatchObject({ text: expect.stringContaining('/sn docs') })
+    expect(w.get('S1')).toMatchObject({ role: 'main', docsPending: true, docs: { record: 'RECORD.md' } })
+    await $.prompt.submit(typed('繼續'))
+    const brief = w.sent[0]!.context?.[0] ?? ''
+    expect(brief).toContain('聊到一半才標成 main')
+    expect(brief).toContain('找專案裡現有的紀錄類檔案')
+    expect(brief).toContain('/sn docs')
+  })
+
+  test('a new session (nothing said yet) gets the two choices only', async ($, on) => {
+    const w = world(on)
+    w.answers = ['main', 'proj', DOCS_OPTIONS[0]]
+    await $.command.run({ command: 'sn', args: 'tag' } as never)
+    expect(w.asks[2]!.options).toEqual([...DOCS_OPTIONS])
+    expect(w.get('S1')?.docsPending).toBeUndefined()
+  })
+
+  test('/sn docs sets the paths; the subs and 統整 already briefed get their rules again with them', async ($, on) => {
+    const w = world(on, {
+      [KEY('M1')]: mainEntry({ docsPending: true }),
+      [KEY('B1')]: { role: 'sub', parentId: 'M1', taggedAt: 2, briefed: true },
+      [KEY('T1')]: { role: 'synthesis', parentId: 'M1', taggedAt: 3, briefed: false },
+    })
+    w.session.id = 'M1'
+    expect(await $.command.run({ command: 'sn', args: 'docs a, b' } as never)).toMatchObject({ text: expect.stringContaining('用法') })
+    const r = await $.command.run({ command: 'sn', args: 'docs notes/HANDOFF.md, notes/runs.jsonl, notes/evidence/' } as never)
+    expect(r).toMatchObject({ text: expect.stringContaining('1 個 session（sub）') })
+    expect(w.get('M1')).toMatchObject({ docs: { record: 'notes/HANDOFF.md', progress: 'notes/runs.jsonl', evidence: 'notes/evidence/' } })
+    expect(w.get('M1')?.docsPending).toBeUndefined()
+    expect(w.get('B1')).toMatchObject({ briefed: false })
+    w.session.id = 'B1'
+    w.session.messages = [user(KICKOFF), reply('好')]
+    await $.prompt.submit({ text: '請做第一步', origin: { kind: 'peer' } } as never)
+    expect(w.sent.at(-1)!.context?.[0]).toContain('notes/runs.jsonl')
+    // in a sub: the paths are main's, shown not changed
+    expect(await $.command.run({ command: 'sn', args: 'docs x, y, z' } as never)).toMatchObject({ text: expect.stringContaining('文件路徑由 main 決定') })
   })
 })

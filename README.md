@@ -96,6 +96,8 @@ OPENAI_API_KEY=sk-...
 - 文件路徑預設 `RECORD.md`、`progress.jsonl`、`evidence/`，或 `docs/` 底下的同名檔；在「其他」依序打三個路徑、用逗號分開可以自訂。路徑都相對於專案根目錄。
 - 標好角色後，那個 session 的下一句會帶上這個角色的工作規則（只帶一次，你看不到，Claude 讀得到）。sub 的下一句通常是 main 用 SendMessage 送來的那句。
 - `/sn tag`：手動標、改標或清除（main / sub / 統整 / 清除），沒有 Jev key 時用這個。標 sub 或統整要先有 main。
+- **已經在聊的 session 標成 main**：文件路徑的對話框多一個「讓這個 session 先整理再決定」。選了之後，main 會先找專案裡現有的紀錄、提議哪個當紀錄檔、進度檔和證據資料夾，你同意後把到目前為止的對話整理成第一份紀錄，再請你打 `/sn docs <紀錄>, <進度>, <證據>`。路徑最好在 fork sub 之前定好；之後才改的話，已經拿到舊路徑的 sub 和統整 session 會在它們的下一句收到新路徑。
+- `/sn docs`：在 main 看或改文件路徑。
 - 簡報類 skill（`research-report-writing`、`deckframes`、`pptx`、`docx`、`docs`）只放在統整 session 的 skill 清單裡；其他 session（包括沒標角色的）要用就手打 `/名字`。名單是 plugin 的選項 `deckSkills`。一個 session 送出過請求後才改角色，清單不會回頭改（改了會讓快取失效）。
 
 ### 開一張便利貼
@@ -149,6 +151,7 @@ OPENAI_API_KEY=sk-...
 | --- | --- |
 | `/sn` | 開 / 關右側 pane |
 | `/sn tag` | 標這個 session 的角色：main、sub、統整，或清除 |
+| `/sn docs [<紀錄>, <進度>, <證據>]` | 在 main 看或改文件路徑 |
 | `/sn new <問題>` | 開一張便利貼 |
 | `/sn back` | 結束追問，回到主線 |
 | `/sn rm` | 刪除 pane 裡點開的那則便利貼和它底下的追問（會先問） |
@@ -194,7 +197,7 @@ npx -p typescript@5.6 tsc -p .
 - `hooks/register.tsx`：所有 hook，以及 `portsOf($)`。只有這個檔碰 `$`（PROBE.md P1）。
 - `hooks/tree.ts`、`jev.ts`（只剩呼叫 Jev 的通道）、`redact.ts`、`digest.ts`、`answer.ts`：邏輯模組，純函式或吃 `Ports`。
 - `hooks/notes.ts`：流程（便利貼 → 背景回答 → Notion 同步）。
-- `hooks/roles.ts`：session 角色（第一句的判斷與對話框、fork 標成 sub、工作規則、skill 清單、`/sn tag`）。每個 session 一個 key：`role:<專案>:<session id>`。
+- `hooks/roles.ts`：session 角色（第一句的判斷與對話框、fork 標成 sub、工作規則、skill 清單、`/sn tag`、`/sn docs`）。每個 session 一個 key：`role:<專案>:<session id>`。
 - `hooks/secrets.ts`：金鑰從哪裡來。
 - `hooks/pane.tsx`：右側 pane 與輸入框下方的狀態列。
 - `probes/m0/`：M0 探針 mod（`cc-sticky-probe`），獨立的 plugin。

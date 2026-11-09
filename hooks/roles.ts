@@ -31,6 +31,12 @@ export type RoleEntry = {
   fingerprint?: string
   /** Whether the working rules went with a prompt since the role was set. */
   briefed?: boolean
+  /**
+   * A main tagged mid-conversation that leaves its documents to the session (11/09): its brief
+   * asks it to find the project's records, propose paths and write the first record; the person
+   * sets them with `/sn docs`. `docs` holds the defaults until then.
+   */
+  docsPending?: boolean
 }
 
 export const ROLE_LABEL: Record<Role, string> = { main: 'main', sub: 'sub', synthesis: '統整' }
@@ -189,16 +195,26 @@ async function askParent(ask: Ask, mains: { id: string; entry: RoleEntry }[], qu
   return i < 0 ? null : shown[i]!.id
 }
 
+/** The docs dialog's third option, for a session tagged main mid-conversation. */
+export const ORGANIZE_DOCS = '讓這個 session 先整理再決定'
+
 /** A main's name, then its documents; null when either dialog was left. */
-async function askMain(p: Ports, ask: Ask, firstPrompt: string | null): Promise<{ name: string; docs: Docs } | null> {
+async function askMain(p: Ports, ask: Ask, firstPrompt: string | null, talked = false): Promise<{ name: string; docs: Docs; docsPending: boolean } | null> {
   const candidates = [...new Set([firstPrompt === null ? '' : cut(normalizeText(firstPrompt), NAME_CHARS), folderName(await p.projectRoot())].filter(s => s !== ''))]
   const options = candidates.length >= 2 ? candidates : [...candidates, CANCEL]
   const named = await ask('這個 main 要叫什麼名字？要用別的名字就選「其他」自己打。', options, 'main 名稱')
   if (named === null || (named === CANCEL && !candidates.includes(CANCEL))) return null
   const name = cut(normalizeText(named), 40) || candidates[0] || 'main'
-  const docsAnswer = await ask('專案文件放在哪裡？要改就選「其他」，依序打紀錄檔、進度檔、證據資料夾，用逗號分開。', [...DOCS_OPTIONS], '文件路徑')
+  const docsAnswer = await ask(
+    talked
+      ? '專案文件放在哪裡？要改就選「其他」，依序打紀錄檔、進度檔、證據資料夾，用逗號分開。不確定的話，選最後一項：這個 session 會先找專案裡現有的紀錄、提議路徑、把到目前為止的對話整理成第一份紀錄。'
+      : '專案文件放在哪裡？要改就選「其他」，依序打紀錄檔、進度檔、證據資料夾，用逗號分開。',
+    talked ? [...DOCS_OPTIONS, ORGANIZE_DOCS] : [...DOCS_OPTIONS],
+    '文件路徑',
+  )
   if (docsAnswer === null) return null
-  return { name, docs: parseDocs(docsAnswer) }
+  if (talked && docsAnswer === ORGANIZE_DOCS) return { name, docs: { ...DEFAULT_DOCS }, docsPending: true }
+  return { name, docs: parseDocs(docsAnswer), docsPending: false }
 }
 
 // ---- first-prompt classification (Jev) ----
@@ -327,6 +343,16 @@ export async function tagFork(p: Ports): Promise<RoleEntry | null> {
 
 // ---- the brief ----
 
+/** What a main tagged mid-conversation does first, when the person left the documents to it. */
+const ORGANIZE_STEPS = [
+  '',
+  '這個 session 是聊到一半才標成 main 的，文件路徑還沒定。上面的路徑是預設值，先不要照著寫。先做這幾件事，再回到原本的工作：',
+  '1. 找專案裡現有的紀錄類檔案（交接、筆記、進度、決策、實驗紀錄之類），列出路徑和各自的內容大概是什麼。',
+  '2. 提議哪個當紀錄檔（決定與現況，只有 main 寫）、哪個當進度檔（sub 一行一個 JSON 的執行紀錄）、證據放哪個資料夾。沒有合適的就用上面的預設值。問使用者同不同意。',
+  '3. 使用者同意後，把到目前為止的對話整理進紀錄檔：做過的決定、目前狀態、還沒做完的事、要使用者決定的事，每一條附上日期。已經有的內容不要刪，用補的。',
+  '4. 請使用者打「/sn docs <紀錄>, <進度>, <證據>」，把路徑告訴 mod；之後 fork 出來的 sub 和統整 session 才會拿到這組路徑。',
+]
+
 /** The working rules a role's session gets with its next prompt (Traditional Chinese, short). */
 export async function briefOf(p: Ports, root: string, id: string, me: RoleEntry): Promise<string> {
   const where = await p.projectRoot()
@@ -340,6 +366,7 @@ export async function briefOf(p: Ports, root: string, id: string, me: RoleEntry)
       '- 需要實作時，用 SendMessage 交給從這個 session fork 出來的 sub session（Desktop 會把 fork 列成連結的 session）；大段的實作不要自己做。',
       `- sub 回報後，把結果整理進 ${d.record}。${d.record} 只由 main 寫。`,
       `- ${d.progress} 和 ${d.evidence} 是 sub 寫的地方。${paths}`,
+      ...(me.docsPending === true ? ORGANIZE_STEPS : []),
     ].join('\n')
   }
   const pid = me.parentId ?? '（未指定）'
@@ -391,9 +418,10 @@ export async function tagCommand(p: Ports): Promise<string> {
   let next: RoleEntry
   if (role === 'main') {
     const first = firstUserText(messages)
-    const main = await askMain(p, ask, first)
+    const main = await askMain(p, ask, first, sent)
     if (main === null) return '沒有改變這個 session 的角色'
     next = { role, parentId: null, taggedAt: await p.now(), name: main.name, docs: main.docs, briefed: false }
+    if (main.docsPending) next.docsPending = true
     // none yet (tagged before the first prompt): that prompt gives it (atPrompt)
     if (first !== null) next.fingerprint = fingerprintOf(first)
   } else {
@@ -409,6 +437,7 @@ export async function tagCommand(p: Ports): Promise<string> {
   const keepsListing = sent && (role === 'synthesis') !== (entry?.role === 'synthesis')
   return [
     `這個 session 標成 ${shown}。下一句會帶上這個角色的工作規則。`,
+    ...(next.docsPending === true ? ['文件路徑還沒定：下一句起，這個 session 會先找專案裡現有的紀錄、提議路徑，你同意後它整理出第一份紀錄。定好後打 /sn docs <紀錄>, <進度>, <證據>。'] : []),
     ...(keepsListing ? ['這個 session 已經送出過請求，skill 清單不回頭改（改了會讓快取失效）；簡報類 skill 要用就手打 /名字，或開一個新的統整 session。'] : []),
   ].join('\n')
 }
@@ -451,3 +480,41 @@ export async function roleLine(p: Ports): Promise<string | null> {
   const parent = await entryOf(p, root, entry.parentId)
   return `${ROLE_LABEL[entry.role]} ← ${entry.parentId === null ? '?' : mainName(entry.parentId, parent)}`
 }
+
+// ---- /sn docs ----
+
+/**
+ * `/sn docs <紀錄>, <進度>, <證據>` in a main: its documents. Its subs and 統整 sessions that had
+ * their rules already get them again, with the new paths, on their next prompt. No args: the paths.
+ */
+export async function docsCommand(p: Ports, args: string): Promise<string> {
+  const { root, id, entry } = await myRole(p)
+  if (entry === null || entry.role !== 'main') {
+    const parent = entry === null ? null : await entryOf(p, root, entry.parentId)
+    return parent === null
+      ? '/sn docs 要在 main session 裡打（這個 session 不是 main）。'
+      : `文件路徑由 main 決定。這個 session 屬於 main「${mainName(entry!.parentId!, parent)}」，目前是：${showDocs(parent.docs ?? DEFAULT_DOCS)}`
+  }
+  const cur = entry.docs ?? DEFAULT_DOCS
+  if (args.trim() === '') return `main「${mainName(id, entry)}」的文件：${showDocs(cur)}${entry.docsPending === true ? '（還沒定，這是預設值）' : ''}\n改：/sn docs <紀錄>, <進度>, <證據>`
+  const parts = args.split(/[,，]/).map(x => x.trim()).filter(x => x !== '')
+  if (parts.length !== 3) return '用法：/sn docs <紀錄>, <進度>, <證據>（三個路徑，用逗號分開，相對於專案根目錄）'
+  const [record, progress, evidence] = parts as [string, string, string]
+  const docs = { record, progress, evidence }
+  const next: RoleEntry = { ...entry, docs }
+  delete next.docsPending
+  await p.store.set(roleKey(root, id), next)
+  // the ones that already have the old paths get their rules again
+  const told: string[] = []
+  for (const r of await projectRoles(p, root)) {
+    if (r.entry.parentId !== id || r.entry.briefed !== true) continue
+    await p.store.set(roleKey(root, r.id), { ...r.entry, briefed: false })
+    told.push(ROLE_LABEL[r.entry.role])
+  }
+  return [
+    `main「${mainName(id, entry)}」的文件改成：${showDocs(docs)}`,
+    ...(told.length > 0 ? [`已經拿到舊路徑的 ${told.length} 個 session（${told.join('、')}）會在它們的下一句收到新路徑。`] : []),
+  ].join('\n')
+}
+
+const showDocs = (d: Docs) => `紀錄 ${d.record}、進度 ${d.progress}、證據 ${d.evidence}`
