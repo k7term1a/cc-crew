@@ -98,7 +98,7 @@ OPENAI_API_KEY=sk-...
 - 標好角色後，那個 session 的下一句會帶上這個角色的工作規則（只帶一次，你看不到，Claude 讀得到）。sub 的下一句通常是 main 用 SendMessage 送來的那句。
 - `/sn tag`：手動標、改標或清除（main / sub / 統整 / 清除），沒有 Jev key 時用這個。標 sub 或統整要先有 main。
 - **已經在聊的 session 標成 main**：文件路徑的對話框多一個「讓這個 session 先整理再決定」。選了之後，main 會先找專案裡現有的紀錄、提議哪個當紀錄檔、進度檔和證據資料夾，你同意後把到目前為止的對話整理成第一份紀錄，再請你打 `/sn docs <紀錄>, <進度>, <證據>, <外部>`。路徑最好在 fork sub 之前定好；之後才改的話，已經拿到舊路徑的 sub 和統整 session 會在它們的下一句收到新路徑。
-- `/sn docs`：在 main 看或改文件路徑。
+- `/sn docs`：在 main 看或改文件路徑；`/sn docs default` 套用 `docs/` 底下的預設。路徑不變也可以打一次，讓已經拿到規則的 sub 和統整 session 在下一句收到新版規則。
 - 簡報類 skill（`research-report-writing`、`deckframes`、`pptx`、`docx`、`docs`）只放在統整 session 的 skill 清單裡；其他 session（包括沒標角色的）要用就手打 `/名字`。名單是 plugin 的選項 `deckSkills`。一個 session 送出過請求後才改角色，清單不會回頭改（改了會讓快取失效）。
 
 ### 開一張便利貼
@@ -152,7 +152,7 @@ OPENAI_API_KEY=sk-...
 | --- | --- |
 | `/sn` | 開 / 關右側 pane |
 | `/sn tag` | 標這個 session 的角色：main、sub、統整，或清除 |
-| `/sn docs [<紀錄>, <進度>, <證據>, <外部>]` | 在 main 看或改文件路徑 |
+| `/sn docs [default \| <紀錄>, <進度>, <證據>, <外部>]` | 在 main 看或改文件路徑；`default` 套用 `docs/` 底下的預設 |
 | `/sn new <問題>` | 開一張便利貼 |
 | `/sn back` | 結束追問，回到主線 |
 | `/sn rm` | 刪除 pane 裡點開的那則便利貼和它底下的追問（會先問） |

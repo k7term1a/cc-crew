@@ -572,9 +572,9 @@ export async function docsCommand(p: Ports, args: string): Promise<string> {
       : `文件路徑由 main 決定。這個 session 屬於 main「${mainName(entry!.parentId!, parent)}」，目前是：${showDocs(fullDocs(parent.docs ?? DEFAULT_DOCS))}`
   }
   const cur = fullDocs(entry.docs ?? DEFAULT_DOCS)
-  if (args.trim() === '') return `main「${mainName(id, entry)}」的文件：${showDocs(cur)}${entry.docsPending === true ? '（還沒定，這是預設值）' : ''}\n改：/sn docs <紀錄>, <進度>, <證據>, <外部>`
-  const docs = docsFrom(args)
-  if (docs === null) return '用法：/sn docs <紀錄>, <進度>, <證據>, <外部>（用逗號分開，相對於專案根目錄；只給三個時，外部資料夾放在紀錄檔旁邊的 external/）'
+  if (args.trim() === '') return `main「${mainName(id, entry)}」的文件：${showDocs(cur)}${entry.docsPending === true ? '（還沒定，這是預設值）' : ''}\n改：/sn docs default（docs/ 底下的預設），或 /sn docs <紀錄>, <進度>, <證據>, <外部>`
+  const docs = args.trim().toLowerCase() === 'default' ? { ...DEFAULT_DOCS } : docsFrom(args)
+  if (docs === null) return '用法：/sn docs default（docs/ 底下的預設），或 /sn docs <紀錄>, <進度>, <證據>, <外部>（用逗號分開，相對於專案根目錄；只給三個時，外部資料夾放在紀錄檔旁邊的 external/）'
   const next: RoleEntry = { ...entry, docs }
   delete next.docsPending
   await p.store.set(roleKey(root, id), next)

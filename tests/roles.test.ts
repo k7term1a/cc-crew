@@ -527,3 +527,19 @@ describe('the external folder (11/11)', () => {
     expect(w.files.has('/proj/d/in/README.md')).toBe(true)
   })
 })
+
+describe('/sn docs default (11/11)', () => {
+  test('applies the docs/ defaults, clears the pending mark, and briefs the subs again', async ($, on) => {
+    const w = world(on, {
+      [KEY('M1')]: mainEntry({ docsPending: true }),
+      [KEY('B1')]: { role: 'sub', parentId: 'M1', taggedAt: 2, briefed: true },
+    })
+    w.session.id = 'M1'
+    const r = await $.command.run({ command: 'sn', args: 'docs default' } as never)
+    expect(r).toMatchObject({ text: expect.stringContaining('外部 docs/external/') })
+    expect(w.get('M1')?.docs).toEqual({ record: 'docs/RECORD.md', progress: 'docs/progress.jsonl', evidence: 'docs/evidence/', external: 'docs/external/' })
+    expect(w.get('M1')?.docsPending).toBeUndefined()
+    expect(w.get('B1')).toMatchObject({ briefed: false })
+    expect(w.files.has('/proj/docs/external/README.md')).toBe(true)
+  })
+})
