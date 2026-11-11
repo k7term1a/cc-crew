@@ -26,6 +26,8 @@ type World = {
   sent: { text: string; context?: readonly string[] }[]
   session: { id: string; messages: SessionMessage[] }
   clock: ReturnType<typeof mock.clock>
+  /** The project's files, by absolute path. */
+  files: Map<string, string>
 }
 
 type AskCall = { questions: { question: string; header: string; options: { label: string }[] }[] }
@@ -48,7 +50,14 @@ function world(on: On, seed: Record<string, unknown> = {}, cfg: { key?: boolean 
     sent: [],
     session: { id: 'S1', messages: [] },
     clock: mock.clock(on, { now: Date.UTC(2026, 10, 5, 6, 30) }),
+    files: new Map(),
   }
+  // the engine hands paths resolved (C:\proj\…); the fake keeps them as /proj/…
+  const norm = (path: string) => path.replace(/\\/g, '/').replace(/^[a-zA-Z]:/, '')
+  const under = (path: string) => norm(path).replace(/\/+$/, '') + '/'
+  on('fs.exists', ($, e) => ({ value: [...w.files.keys()].some(k => k === norm(e.path) || k.startsWith(under(e.path))) }) as never)
+  on('fs.list', ($, e) => ({ value: [...new Set([...w.files.keys()].filter(k => k.startsWith(under(e.path))).map(k => k.slice(under(e.path).length).split('/')[0]!))].map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false })) }) as never)
+  on('fs.write', ($, e) => (w.files.set(norm(e.path), e.text), { value: undefined }) as never)
   on('store.get', ($, e) => ({ value: mem.has(e.key) ? JSON.parse(JSON.stringify(mem.get(e.key))) : undefined }) as never)
   on('store.set', ($, e) => (mem.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }) as never)
   on('store.delete', ($, e) => (mem.delete(e.key), { value: undefined }) as never)
@@ -132,14 +141,14 @@ describe('first prompt', () => {
     expect(w.jevBodies[0]!.state).toContain('移除 JWT')
     expect(w.asks.map(a => a.options)).toEqual([['要，標成 main', '不用'], [FIRST20, 'proj'], [...DOCS_OPTIONS]])
     expect(w.asks[0]!.question).toContain('fork 出來的會自動標成 sub')
-    expect(w.get('S1')).toMatchObject({ role: 'main', parentId: null, name: FIRST20, docs: { record: 'docs/RECORD.md', progress: 'docs/progress.jsonl', evidence: 'docs/evidence/' }, fingerprint: fingerprintOf(KICKOFF), briefed: true })
+    expect(w.get('S1')).toMatchObject({ role: 'main', parentId: null, name: FIRST20, docs: { record: 'RECORD.md', progress: 'progress.jsonl', evidence: 'evidence/', external: 'external/' }, fingerprint: fingerprintOf(KICKOFF), briefed: true })
     expect(fingerprintOf(KICKOFF)).toHaveLength(200)
     expect(fingerprintOf(KICKOFF)).not.toContain('\n')
     // the brief went with this same prompt
     const ctx = w.sent[0]!.context ?? []
     expect(ctx).toHaveLength(1)
     expect(ctx[0]).toContain(`main session「${FIRST20}」`)
-    expect(ctx[0]).toContain('docs/RECORD.md 只由 main 寫')
+    expect(ctx[0]).toContain('RECORD.md 只由 main 寫')
     expect(ctx[0]).toContain('SendMessage')
     // nothing was sent yet: the listing is asked again; the status line shows the role
     expect(w.invalidated).toEqual(['prompt.attachment'])
@@ -158,7 +167,9 @@ describe('first prompt', () => {
     w.answers = ['要，標成 main', '  我的專案  ', 'notes/R.md, notes/p.jsonl , notes/ev/']
     await $.prompt.submit(typed(KICKOFF))
     expect(w.get('S1')).toMatchObject({ name: '我的專案', docs: { record: 'notes/R.md', progress: 'notes/p.jsonl', evidence: 'notes/ev/' } })
-    expect(parseDocs('就放根目錄')).toEqual({ record: 'RECORD.md', progress: 'progress.jsonl', evidence: 'evidence/' })
+    expect(parseDocs('就放根目錄')).toEqual({ record: 'docs/RECORD.md', progress: 'docs/progress.jsonl', evidence: 'docs/evidence/', external: 'docs/external/' })
+    // three paths typed: the external folder beside the record
+    expect(w.get('S1')?.docs).toMatchObject({ external: 'notes/external/' })
   })
 
   test('kickoff declined, or a dialog closed on the way: no role, the prompt goes on unchanged', async ($, on) => {
@@ -372,7 +383,7 @@ describe('/sn tag', () => {
     const r = await $.command.run({ command: 'sn', args: 'tag' } as never)
     expect(r).toMatchObject({ text: expect.stringContaining('這個 session 標成 main「proj」') })
     expect(w.asks.map(a => a.options)).toEqual([['main', 'sub', '統整', '清除'], ['proj', '取消'], [...DOCS_OPTIONS]])
-    expect(w.get('S1')).toMatchObject({ role: 'main', name: 'proj', docs: { record: 'RECORD.md' }, briefed: false })
+    expect(w.get('S1')).toMatchObject({ role: 'main', name: 'proj', docs: { record: 'docs/RECORD.md', external: 'docs/external/' }, briefed: false })
     expect(w.get('S1')?.fingerprint).toBeUndefined()
     expect(w.invalidated).toEqual(['prompt.attachment'])
     expect(w.statuses.at(-1)).toBe('main「proj」')
@@ -428,7 +439,9 @@ describe('documents of a main tagged mid-conversation (11/09)', () => {
     const r = await $.command.run({ command: 'sn', args: 'tag' } as never)
     expect(w.asks[2]!.options).toEqual([...DOCS_OPTIONS, ORGANIZE_DOCS])
     expect(r).toMatchObject({ text: expect.stringContaining('/sn docs') })
-    expect(w.get('S1')).toMatchObject({ role: 'main', docsPending: true, docs: { record: 'RECORD.md' } })
+    expect(w.get('S1')).toMatchObject({ role: 'main', docsPending: true, docs: { record: 'docs/RECORD.md' } })
+    // the paths are not decided: no folder made yet
+    expect(w.files.size).toBe(0)
     await $.prompt.submit(typed('繼續'))
     const brief = w.sent[0]!.context?.[0] ?? ''
     expect(brief).toContain('聊到一半才標成 main')
@@ -463,5 +476,54 @@ describe('documents of a main tagged mid-conversation (11/09)', () => {
     expect(w.sent.at(-1)!.context?.[0]).toContain('notes/runs.jsonl')
     // in a sub: the paths are main's, shown not changed
     expect(await $.command.run({ command: 'sn', args: 'docs x, y, z' } as never)).toMatchObject({ text: expect.stringContaining('文件路徑由 main 決定') })
+  })
+})
+
+describe('the external folder (11/11)', () => {
+  test('a main gets the folder with a README; what the person adds is told to main once, README aside', async ($, on) => {
+    const w = world(on)
+    await $.session.start({ cwd: ROOT, surface: 'desktop', isInteractive: true })
+    w.jev = { kind: 'kickoff' }
+    w.answers = ['要，標成 main', FIRST20, DOCS_OPTIONS[0]]
+    await $.prompt.submit(typed(KICKOFF))
+    expect([...w.files.keys()]).toEqual(['/proj/docs/external/README.md'])
+    expect(w.files.get('/proj/docs/external/README.md')).toContain('docs/RECORD.md')
+    const brief = w.sent[0]!.context?.[0] ?? ''
+    expect(brief).toContain('docs/external/ 放使用者帶進來的外部資料')
+    expect(w.sent[0]!.context).toHaveLength(1) // the README is not news
+    w.session.messages = [user(KICKOFF), reply('好')]
+    w.files.set('/proj/docs/external/2026-11-11-deep-research.md', '...')
+    await $.prompt.submit(typed('接著做'))
+    const notice = w.sent[1]!.context?.[0] ?? ''
+    expect(notice).toContain('有新的外部資料：docs/external/2026-11-11-deep-research.md')
+    expect(notice).toContain('更新進 docs/RECORD.md')
+    await $.prompt.submit(typed('再來'))
+    expect(w.sent[2]!.context ?? []).toEqual([])
+    expect(w.get('S1')?.externalSeen).toEqual(['2026-11-11-deep-research.md'])
+  })
+
+  test('only main hears of it; a sub is told not to touch it; an older main without the fourth path gets it beside the record', async ($, on) => {
+    const w = world(on, {
+      [KEY('M1')]: mainEntry({ docs: { record: 'notes/R.md', progress: 'notes/p.jsonl', evidence: 'notes/ev/' } }),
+      [KEY('B1')]: { role: 'sub', parentId: 'M1', taggedAt: 2, briefed: false },
+    })
+    w.files.set('/proj/notes/external/spec-v2.md', '...')
+    w.session.id = 'B1'
+    w.session.messages = [user(KICKOFF), reply('好')]
+    await $.prompt.submit({ text: '請做第一步', origin: { kind: 'peer' } } as never)
+    expect(w.sent[0]!.context).toHaveLength(1)
+    expect(w.sent[0]!.context?.[0]).toContain('不要改 notes/R.md（只由 main 寫）和 notes/external/')
+    w.session.id = 'M1'
+    await $.prompt.submit(typed('sub 回報了'))
+    expect(w.sent[1]!.context?.[0]).toContain('notes/external/spec-v2.md')
+  })
+
+  test('/sn docs takes four paths and makes the folder', async ($, on) => {
+    const w = world(on, { [KEY('M1')]: mainEntry() })
+    w.session.id = 'M1'
+    const r = await $.command.run({ command: 'sn', args: 'docs d/R.md, d/p.jsonl, d/ev/, d/in/' } as never)
+    expect(r).toMatchObject({ text: expect.stringContaining('外部 d/in/') })
+    expect(w.get('M1')?.docs).toEqual({ record: 'd/R.md', progress: 'd/p.jsonl', evidence: 'd/ev/', external: 'd/in/' })
+    expect(w.files.has('/proj/d/in/README.md')).toBe(true)
   })
 })

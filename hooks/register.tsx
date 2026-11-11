@@ -97,6 +97,11 @@ function portsOf($: EngineInterface): Ports {
       count($, claudeDelta(r.usage))
       return r
     },
+    files: {
+      list: async dir => ((await $.fs.exists(dir)) ? (await $.fs.list(dir)).map(x => x.name) : null),
+      exists: path => $.fs.exists(path),
+      write: (path, text) => $.fs.write(path, text),
+    },
     keys: {
       typesafe: async () => resolveKey('TYPESAFE_API_KEY', await $.env.get('TYPESAFE_API_KEY'), await keyFilesOf($), readText),
       openai: async () => resolveKey('OPENAI_API_KEY', await $.env.get('OPENAI_API_KEY'), await keyFilesOf($), readText),

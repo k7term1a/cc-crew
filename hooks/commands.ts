@@ -14,7 +14,7 @@ export const COMMAND = 'sticky-note'
 export const COMMAND_SPEC = {
   name: COMMAND,
   description: 'Sticky Notes: session roles (tag main / sub / 統整) and sticky notes: open/close the pane, or tag | docs | new | back | rm | provider | notion | doctor',
-  argumentHint: '[tag | docs [<紀錄>, <進度>, <證據>] | new <問題> | back | rm | provider claude|openai | notion … | doctor]',
+  argumentHint: '[tag | docs [<紀錄>, <進度>, <證據>, <外部>] | new <問題> | back | rm | provider claude|openai | notion … | doctor]',
 }
 
 /**

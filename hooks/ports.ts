@@ -42,6 +42,14 @@ export type Ports = {
     /** One line per key: found or not, and where; never the value. */
     report(): Promise<string[]>
   }
+  /** The project's files ($.fs), by absolute path. */
+  files: {
+    /** Entry names directly under dir; null when it does not exist. */
+    list(dir: string): Promise<string[] | null>
+    exists(path: string): Promise<boolean>
+    /** Writes the file, its directories made as needed. */
+    write(path: string, text: string): Promise<void>
+  }
   ui: {
     log(text: string, to?: 'transcript' | 'debug'): void
     toast(text: string): void

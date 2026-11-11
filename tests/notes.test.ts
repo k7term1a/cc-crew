@@ -125,6 +125,7 @@ function fake(opts: { typesafeKey?: string; openaiKey?: string; askAnswer?: stri
         return { isError: true, content: [] }
       },
     },
+    files: { list: async () => null, exists: async () => false, write: async () => {} },
     keys: { typesafe: async () => opts.typesafeKey, openai: async () => opts.openaiKey, report: async () => [] },
     ui: {
       log: t => void logs.push(t),

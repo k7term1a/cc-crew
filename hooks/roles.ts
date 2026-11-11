@@ -17,7 +17,12 @@ import type { Ports } from './ports'
 import { normalizeRoot } from './tree'
 
 export type Role = 'main' | 'sub' | 'synthesis'
-export type Docs = { record: string; progress: string; evidence: string }
+/**
+ * A main's documents, relative to the project root: the record (main writes it), the progress
+ * log and the evidence folder (subs write them), and the external folder (11/11: what the person
+ * brings in, e.g. deep research or a changed spec; read once, folded into the record).
+ */
+export type Docs = { record: string; progress: string; evidence: string; external: string }
 export type RoleEntry = {
   role: Role
   /** The main a sub or 統整 belongs to; null for a main. */
@@ -26,11 +31,13 @@ export type RoleEntry = {
   /** A main's name, as the dialogs and the status line show it. */
   name?: string
   /** A main's documents (paths relative to the project root). */
-  docs?: Docs
+  docs?: Partial<Docs> & Omit<Docs, 'external'>
   /** A main's first prompt, normalized and cut (fingerprintOf): what its forks start with. */
   fingerprint?: string
   /** Whether the working rules went with a prompt since the role was set. */
   briefed?: boolean
+  /** A main's external folder entries already announced to it (11/11). */
+  externalSeen?: string[]
   /**
    * A main tagged mid-conversation that leaves its documents to the session (11/09): its brief
    * asks it to find the project's records, propose paths and write the first record; the person
@@ -40,8 +47,20 @@ export type RoleEntry = {
 }
 
 export const ROLE_LABEL: Record<Role, string> = { main: 'main', sub: 'sub', synthesis: '統整' }
-export const DEFAULT_DOCS: Docs = { record: 'RECORD.md', progress: 'progress.jsonl', evidence: 'evidence/' }
-export const DOCS_OPTIONS = ['RECORD.md, progress.jsonl, evidence/', 'docs/RECORD.md, docs/progress.jsonl, docs/evidence/'] as const
+export const DEFAULT_DOCS: Docs = { record: 'docs/RECORD.md', progress: 'docs/progress.jsonl', evidence: 'docs/evidence/', external: 'docs/external/' }
+export const DOCS_OPTIONS = ['docs/RECORD.md, docs/progress.jsonl, docs/evidence/, docs/external/', 'RECORD.md, progress.jsonl, evidence/, external/'] as const
+
+/** The four paths, the external folder beside the record when an older entry has none. */
+export function fullDocs(d: Partial<Docs> & Omit<Docs, 'external'>): Docs {
+  const dir = d.record.includes('/') ? d.record.slice(0, d.record.lastIndexOf('/') + 1) : ''
+  return { record: d.record, progress: d.progress, evidence: d.evidence, external: d.external ?? dir + 'external/' }
+}
+
+/** A path under the project root (one typed absolute is kept). */
+export function underRoot(root: string, rel: string): string {
+  if (/^([a-zA-Z]:)?[\\/]/.test(rel)) return rel
+  return root.replace(/[\\/]+$/, '') + '/' + rel
+}
 /** The deck skills only a 統整 session's listing keeps (REQUESTS.md R8 decision 2); the plugin option `deckSkills`. */
 export const DEFAULT_DECK_SKILLS = ['research-report-writing', 'anthropic-skills:deckframes', 'anthropic-skills:pptx', 'anthropic-skills:docx', 'anthropic-skills:docs'] as const
 /** How long a dialog at a prompt may stay unanswered before the prompt goes on untagged. */
@@ -132,12 +151,17 @@ async function entryOf(p: Ports, root: string, id: string | null): Promise<RoleE
   return id === null ? null : asEntry(await p.store.get(roleKey(root, id)))
 }
 
-/** `紀錄, 進度, 證據` as picked or typed (three parts), else the defaults. */
+/** Three or four comma-separated paths (紀錄, 進度, 證據[, 外部]); null when it is not that. */
+export function docsFrom(text: string): Docs | null {
+  const parts = text.split(/[,，]/).map(s => s.trim()).filter(s => s !== '')
+  if (parts.length !== 3 && parts.length !== 4) return null
+  const [record, progress, evidence, external] = parts as [string, string, string, string | undefined]
+  return fullDocs({ record, progress, evidence, ...(external !== undefined ? { external } : {}) })
+}
+
+/** The paths as picked or typed, else the defaults. */
 export function parseDocs(answer: string): Docs {
-  const parts = answer.split(/[,，]/).map(s => s.trim()).filter(s => s !== '')
-  if (parts.length !== 3) return { ...DEFAULT_DOCS }
-  const [record, progress, evidence] = parts as [string, string, string]
-  return { record, progress, evidence }
+  return docsFrom(answer) ?? { ...DEFAULT_DOCS }
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
@@ -207,8 +231,8 @@ async function askMain(p: Ports, ask: Ask, firstPrompt: string | null, talked = 
   const name = cut(normalizeText(named), 40) || candidates[0] || 'main'
   const docsAnswer = await ask(
     talked
-      ? '專案文件放在哪裡？要改就選「其他」，依序打紀錄檔、進度檔、證據資料夾，用逗號分開。不確定的話，選最後一項：這個 session 會先找專案裡現有的紀錄、提議路徑、把到目前為止的對話整理成第一份紀錄。'
-      : '專案文件放在哪裡？要改就選「其他」，依序打紀錄檔、進度檔、證據資料夾，用逗號分開。',
+      ? '專案文件放在哪裡？要改就選「其他」，依序打紀錄檔、進度檔、證據資料夾、外部資料夾，用逗號分開。不確定的話，選最後一項：這個 session 會先找專案裡現有的紀錄、提議路徑、把到目前為止的對話整理成第一份紀錄。'
+      : '專案文件放在哪裡？要改就選「其他」，依序打紀錄檔、進度檔、證據資料夾、外部資料夾，用逗號分開。外部資料夾放你帶進來的東西（深入研究、規範更新），main 讀一次後整理進紀錄檔。',
     talked ? [...DOCS_OPTIONS, ORGANIZE_DOCS] : [...DOCS_OPTIONS],
     '文件路徑',
   )
@@ -308,6 +332,7 @@ export async function atPrompt(p: Ports, e: SubmitInput): Promise<string | null>
       return null
     }
     await p.store.set(roleKey(root, id), me)
+    await ensureExternal(p, me)
     // nothing was sent yet: the first request's listing can still follow the role
     p.ui.invalidateSkillListing()
     await p.state.refreshStatus()
@@ -315,10 +340,18 @@ export async function atPrompt(p: Ports, e: SubmitInput): Promise<string | null>
   if (e.isCommand || e.text.trim() === '') return null
   // a main tagged before its first prompt: that prompt is what its forks will start with
   const fingerprint = me.role === 'main' && (me.fingerprint ?? '') === '' ? fingerprintOf(firstUserText(await read()) ?? e.text) : me.fingerprint
-  if (me.briefed === true && fingerprint === me.fingerprint) return null
-  const brief = me.briefed === true ? null : await briefOf(p, root, id, me)
-  await p.store.set(roleKey(root, id), { ...me, ...(fingerprint !== undefined ? { fingerprint } : {}), briefed: true })
-  return brief
+  let brief: string | null = null
+  if (me.briefed !== true || fingerprint !== me.fingerprint) {
+    brief = me.briefed === true ? null : await briefOf(p, root, id, me)
+    me = { ...me, ...(fingerprint !== undefined ? { fingerprint } : {}), briefed: true }
+    await p.store.set(roleKey(root, id), me)
+  }
+  // 11/11: the external folder (made for a main tagged before it existed), and what the person
+  // put in it since, told once
+  await ensureExternal(p, me)
+  const notice = await externalNotice(p, root, id, me).catch(() => null)
+  const parts = [brief, notice].filter((x): x is string => x !== null)
+  return parts.length === 0 ? null : parts.join('\n\n')
 }
 
 /**
@@ -348,16 +381,57 @@ const ORGANIZE_STEPS = [
   '',
   '這個 session 是聊到一半才標成 main 的，文件路徑還沒定。上面的路徑是預設值，先不要照著寫。先做這幾件事，再回到原本的工作：',
   '1. 找專案裡現有的紀錄類檔案（交接、筆記、進度、決策、實驗紀錄之類），列出路徑和各自的內容大概是什麼。',
-  '2. 提議哪個當紀錄檔（決定與現況，只有 main 寫）、哪個當進度檔（sub 一行一個 JSON 的執行紀錄）、證據放哪個資料夾。沒有合適的就用上面的預設值。問使用者同不同意。',
+  '2. 提議哪個當紀錄檔（決定與現況，只有 main 寫）、哪個當進度檔（sub 一行一個 JSON 的執行紀錄）、證據放哪個資料夾、使用者帶進來的外部資料（深入研究、規範更新）放哪個資料夾。沒有合適的就用上面的預設值。問使用者同不同意。',
   '3. 使用者同意後，把到目前為止的對話整理進紀錄檔：做過的決定、目前狀態、還沒做完的事、要使用者決定的事，每一條附上日期。已經有的內容不要刪，用補的。',
-  '4. 請使用者打「/sn docs <紀錄>, <進度>, <證據>」，把路徑告訴 mod；之後 fork 出來的 sub 和統整 session 才會拿到這組路徑。',
+  '4. 請使用者打「/sn docs <紀錄>, <進度>, <證據>, <外部>」，把路徑告訴 mod；之後 fork 出來的 sub 和統整 session 才會拿到這組路徑。',
 ]
+
+/** What the external folder's README says (written once, when the folder does not exist). */
+export function externalReadme(d: Docs): string {
+  return [
+    '# 外部資料',
+    '',
+    '這個資料夾放你從外面帶進來的東西：深入研究的結果、規範或需求的更新、別人給的文件。',
+    '',
+    '- 檔名開頭放日期，例如 2026-11-11-主題.md。原始內容照原樣放，不要改。',
+    `- main session 會在下一句收到「有新檔」的通知，讀一次，把需要的內容更新進 ${d.record}，並記一條：日期、檔名、採用哪些、不採用哪些與原因。之後不再讀它。`,
+    '- 這個 README 由 cc-sticky-notes 建立，可以刪。',
+    '',
+  ].join('\n')
+}
+
+/** Makes a main's external folder (with its README) when it is missing; never throws. */
+export async function ensureExternal(p: Ports, me: RoleEntry): Promise<void> {
+  if (me.role !== 'main' || me.docsPending === true) return
+  try {
+    const d = fullDocs(me.docs ?? DEFAULT_DOCS)
+    const dir = underRoot(await p.projectRoot(), d.external)
+    if (await p.files.exists(dir)) return
+    await p.files.write(dir.replace(/[\\/]+$/, '') + '/README.md', externalReadme(d))
+  } catch {
+    // a folder the mod could not make: the brief still names it
+  }
+}
+
+/** Entries of the external folder a main has not been told of: README and dot-files aside. */
+export async function externalNotice(p: Ports, root: string, id: string, me: RoleEntry): Promise<string | null> {
+  if (me.role !== 'main' || me.docsPending === true) return null
+  const d = fullDocs(me.docs ?? DEFAULT_DOCS)
+  const names = (await p.files.list(underRoot(await p.projectRoot(), d.external))) ?? []
+  const shown = names.filter(n => n !== 'README.md' && !n.startsWith('.')).sort()
+  const seen = new Set(me.externalSeen ?? [])
+  const fresh = shown.filter(n => !seen.has(n))
+  if (fresh.length === 0) return null
+  await p.store.set(roleKey(root, id), { ...me, externalSeen: shown })
+  const list = fresh.slice(0, 10).map(n => d.external.replace(/[\\/]*$/, '/') + n).join('、') + (fresh.length > 10 ? ` 等 ${fresh.length} 個` : '')
+  return `[sticky-notes] ${d.external} 有新的外部資料：${list}。每個檔讀一次，把需要的內容（決定、規範、要做的事）更新進 ${d.record}，並在 ${d.record} 記一條：日期、檔名、採用哪些、不採用哪些與原因。`
+}
 
 /** The working rules a role's session gets with its next prompt (Traditional Chinese, short). */
 export async function briefOf(p: Ports, root: string, id: string, me: RoleEntry): Promise<string> {
   const where = await p.projectRoot()
   const parent = me.role === 'main' ? me : await entryOf(p, root, me.parentId)
-  const d = (me.role === 'main' ? me.docs : parent?.docs) ?? DEFAULT_DOCS
+  const d = fullDocs((me.role === 'main' ? me.docs : parent?.docs) ?? DEFAULT_DOCS)
   const paths = `（路徑都相對於專案根目錄 ${where}）`
   if (me.role === 'main') {
     return [
@@ -365,7 +439,8 @@ export async function briefOf(p: Ports, root: string, id: string, me: RoleEntry)
       '- 和使用者的討論在這裡進行。',
       '- 需要實作時，用 SendMessage 交給從這個 session fork 出來的 sub session（Desktop 會把 fork 列成連結的 session）；大段的實作不要自己做。',
       `- sub 回報後，把結果整理進 ${d.record}。${d.record} 只由 main 寫。`,
-      `- ${d.progress} 和 ${d.evidence} 是 sub 寫的地方。${paths}`,
+      `- ${d.progress} 和 ${d.evidence} 是 sub 寫的地方。`,
+      `- ${d.external} 放使用者帶進來的外部資料（深入研究、規範更新等）。有新檔時 mod 會在那一句告訴你；每個檔讀一次，把需要的內容更新進 ${d.record}，並記一條：日期、檔名、採用哪些、不採用哪些與原因。之後不用再讀它。${paths}`,
       ...(me.docsPending === true ? ORGANIZE_STEPS : []),
     ].join('\n')
   }
@@ -376,13 +451,13 @@ export async function briefOf(p: Ports, root: string, id: string, me: RoleEntry)
       `[sticky-notes] 這個 session 是 main「${pname}」（id ${pid}）的 sub session。`,
       '- 做 main 用 SendMessage 交給你的實作。',
       `- 執行結果和要記錄的東西寫進 ${d.progress}（一行一個 JSON 物件）和 ${d.evidence}。`,
-      `- 不要改 ${d.record}，它只由 main 寫。`,
+      `- 不要改 ${d.record}（只由 main 寫）和 ${d.external}（使用者放的外部資料）。`,
       `- 做完用 SendMessage 回報給 main（${pid}）。${paths}`,
     ].join('\n')
   }
   return [
     `[sticky-notes] 這個 session 是統整 session，屬於 main「${pname}」（id ${pid}）。`,
-    `- 只讀 ${d.record}、${d.progress}、${d.evidence}，不讀 main 的對話。外部資料（例如 deep research 的結果）也放在這些路徑底下。`,
+    `- 只讀 ${d.record}、${d.progress}、${d.evidence}，不讀 main 的對話。${d.external} 是使用者帶進來的外部原始資料（深入研究、規範更新），main 已經整理進 ${d.record}；只有紀錄檔引用到、需要查原文時才讀。`,
     '- 只根據這些文件回答，每個說法都附上出自哪個檔。文件沒寫的，回答「文件裡沒有」，不要猜，並把缺的項目寫進專案根目錄的 GAPS.md。',
     `- 討論出結果時，寫進對應的文件，再用 SendMessage 回報給 main（${pid}）。${paths}`,
   ].join('\n')
@@ -432,12 +507,13 @@ export async function tagCommand(p: Ports): Promise<string> {
     next = { role, parentId, taggedAt: await p.now(), briefed: false }
   }
   await p.store.set(roleKey(root, id), next)
+  await ensureExternal(p, next)
   await changed()
   const shown = role === 'main' ? `main「${next.name}」` : `${ROLE_LABEL[role]}，屬於 main「${mainName(next.parentId!, await entryOf(p, root, next.parentId))}」`
   const keepsListing = sent && (role === 'synthesis') !== (entry?.role === 'synthesis')
   return [
     `這個 session 標成 ${shown}。下一句會帶上這個角色的工作規則。`,
-    ...(next.docsPending === true ? ['文件路徑還沒定：下一句起，這個 session 會先找專案裡現有的紀錄、提議路徑，你同意後它整理出第一份紀錄。定好後打 /sn docs <紀錄>, <進度>, <證據>。'] : []),
+    ...(next.docsPending === true ? ['文件路徑還沒定：下一句起，這個 session 會先找專案裡現有的紀錄、提議路徑，你同意後它整理出第一份紀錄。定好後打 /sn docs <紀錄>, <進度>, <證據>, <外部>。'] : []),
     ...(keepsListing ? ['這個 session 已經送出過請求，skill 清單不回頭改（改了會讓快取失效）；簡報類 skill 要用就手打 /名字，或開一個新的統整 session。'] : []),
   ].join('\n')
 }
@@ -484,7 +560,7 @@ export async function roleLine(p: Ports): Promise<string | null> {
 // ---- /sn docs ----
 
 /**
- * `/sn docs <紀錄>, <進度>, <證據>` in a main: its documents. Its subs and 統整 sessions that had
+ * `/sn docs <紀錄>, <進度>, <證據>[, <外部>]` in a main: its documents. Its subs and 統整 sessions that had
  * their rules already get them again, with the new paths, on their next prompt. No args: the paths.
  */
 export async function docsCommand(p: Ports, args: string): Promise<string> {
@@ -493,17 +569,16 @@ export async function docsCommand(p: Ports, args: string): Promise<string> {
     const parent = entry === null ? null : await entryOf(p, root, entry.parentId)
     return parent === null
       ? '/sn docs 要在 main session 裡打（這個 session 不是 main）。'
-      : `文件路徑由 main 決定。這個 session 屬於 main「${mainName(entry!.parentId!, parent)}」，目前是：${showDocs(parent.docs ?? DEFAULT_DOCS)}`
+      : `文件路徑由 main 決定。這個 session 屬於 main「${mainName(entry!.parentId!, parent)}」，目前是：${showDocs(fullDocs(parent.docs ?? DEFAULT_DOCS))}`
   }
-  const cur = entry.docs ?? DEFAULT_DOCS
-  if (args.trim() === '') return `main「${mainName(id, entry)}」的文件：${showDocs(cur)}${entry.docsPending === true ? '（還沒定，這是預設值）' : ''}\n改：/sn docs <紀錄>, <進度>, <證據>`
-  const parts = args.split(/[,，]/).map(x => x.trim()).filter(x => x !== '')
-  if (parts.length !== 3) return '用法：/sn docs <紀錄>, <進度>, <證據>（三個路徑，用逗號分開，相對於專案根目錄）'
-  const [record, progress, evidence] = parts as [string, string, string]
-  const docs = { record, progress, evidence }
+  const cur = fullDocs(entry.docs ?? DEFAULT_DOCS)
+  if (args.trim() === '') return `main「${mainName(id, entry)}」的文件：${showDocs(cur)}${entry.docsPending === true ? '（還沒定，這是預設值）' : ''}\n改：/sn docs <紀錄>, <進度>, <證據>, <外部>`
+  const docs = docsFrom(args)
+  if (docs === null) return '用法：/sn docs <紀錄>, <進度>, <證據>, <外部>（用逗號分開，相對於專案根目錄；只給三個時，外部資料夾放在紀錄檔旁邊的 external/）'
   const next: RoleEntry = { ...entry, docs }
   delete next.docsPending
   await p.store.set(roleKey(root, id), next)
+  await ensureExternal(p, next)
   // the ones that already have the old paths get their rules again
   const told: string[] = []
   for (const r of await projectRoles(p, root)) {
@@ -517,4 +592,4 @@ export async function docsCommand(p: Ports, args: string): Promise<string> {
   ].join('\n')
 }
 
-const showDocs = (d: Docs) => `紀錄 ${d.record}、進度 ${d.progress}、證據 ${d.evidence}`
+const showDocs = (d: Docs) => `紀錄 ${d.record}、進度 ${d.progress}、證據 ${d.evidence}、外部 ${d.external}`
